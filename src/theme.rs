@@ -460,6 +460,12 @@ pub fn install_fonts(ctx: &egui::Context, mono_hint: &str, mono_size: f32) {
         ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
         ("/System/Library/Fonts/Supplemental/Songti.ttc", 0),
         ("/Library/Fonts/Arial Unicode.ttf", 0),
+        // Windows: Microsoft YaHei, then the older SimSun / DengXian faces.
+        ("C:\\Windows\\Fonts\\msyh.ttc", 0),
+        ("C:\\Windows\\Fonts\\msyhl.ttc", 0),
+        ("C:\\Windows\\Fonts\\Deng.ttf", 0),
+        ("C:\\Windows\\Fonts\\simsun.ttc", 0),
+        ("C:\\Windows\\Fonts\\simhei.ttf", 0),
     ] {
         if !std::path::Path::new(path).exists() {
             continue;
@@ -540,6 +546,10 @@ fn mono_candidates(hint: &str) -> Vec<(String, u32)> {
         out.push(("/System/Library/Fonts/SFNSMono.ttf".into(), 0));
     }
     // Generic fallbacks, always appended.
+    // Windows: Consolas, then Lucida Console / Courier New.
+    out.push(("C:\\Windows\\Fonts\\consola.ttf".into(), 0));
+    out.push(("C:\\Windows\\Fonts\\lucon.ttf".into(), 0));
+    out.push(("C:\\Windows\\Fonts\\cour.ttf".into(), 0));
     out.push(("/System/Library/Fonts/Menlo.ttc".into(), 0));
     out.push(("/System/Library/Fonts/SFNSMono.ttf".into(), 0));
     out.push(("/System/Library/Fonts/Monaco.ttf".into(), 0));

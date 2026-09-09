@@ -15,6 +15,13 @@ path = "src/main.rs"
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 
+# Windows only: native message box for fatal startup errors (src/logging.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [dependencies]
 # ── UI ────────────────────────────────────────────────────────────────────────
 # `x11` + `wayland` are required by winit on Linux: without them winit has no
@@ -76,7 +83,6 @@ base64 = "0.23"
 arboard = "3"
 png = "0.18"
 log = "0.4"
-env_logger = "0.11"
 
 # Dev profile: optimised enough for smooth terminal rendering, but without
 # debug info or incremental artefacts so `target/` stays reasonably small.

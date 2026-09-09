@@ -15,6 +15,7 @@ mod crypto;
 mod font_metrics;
 mod icons;
 mod local_fs;
+mod logging;
 mod models;
 mod remote_fs;
 mod session;
@@ -34,12 +35,17 @@ use std::sync::Arc;
 
 const APP_ZOOM_STORAGE_KEY: &str = "tinyterm-egui.appZoom";
 
-fn main() -> Result<()> {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info,russh=warn,russh_sftp=warn"),
-    )
-    .init();
+fn main() {
+    logging::init();
+    logging::install_panic_hook();
+    if let Err(err) = run() {
+        // A GUI build has no console, so a returned error would otherwise make
+        // the app look like it simply refuses to open.
+        logging::fatal(&format!("{err:#}"));
+    }
+}
 
+fn run() -> Result<()> {
     // ── Storage ──────────────────────────────────────────────────────────────
     let db_path = storage::default_db_path();
     let db = match storage::Db::open(&db_path) {
@@ -90,6 +96,7 @@ fn main() -> Result<()> {
     };
 
     let bus_for_app = state.mgr.bus.clone();
+    log::info!("creating the window (renderer: glow/OpenGL)");
     let result = eframe::run_native(
         "TinyTerm",
         options,
@@ -105,7 +112,16 @@ fn main() -> Result<()> {
     write_zoom(app_zoom);
     drop(runtime);
 
-    result.map_err(|e| anyhow::anyhow!("eframe: {e}"))
+    // The glow backend needs a real OpenGL 2.0+ driver. On a VM or an RDP
+    // session Windows may only offer the 1.1 software renderer, and this is the
+    // error that used to make the app close without any explanation.
+    result.map_err(|e| {
+        anyhow::anyhow!(
+            "无法创建窗口：{e}\n\n\
+             最常见的原因是显卡驱动不支持 OpenGL 2.0（虚拟机 / 远程桌面里很常见）。\n\
+             请安装显卡驱动，或改用支持 OpenGL 的图形会话后重试。"
+        )
+    })
 }
 
 fn zoom_path() -> std::path::PathBuf {
