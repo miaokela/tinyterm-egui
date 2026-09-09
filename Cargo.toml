@@ -1,0 +1,86 @@
+[package]
+name = "tinyterm-egui"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "TinyTerm — an egui/eframe reimplementation of the TinyTerm SSH client (cosmic glassmorphism theme)"
+authors = ["TinyTerm"]
+license = "MIT"
+
+[[bin]]
+name = "tinyterm-egui"
+path = "src/main.rs"
+
+[dependencies]
+# ── UI ────────────────────────────────────────────────────────────────────────
+eframe = { version = "0.36", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+] }
+egui = "0.36"
+
+# ── async runtime ─────────────────────────────────────────────────────────────
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "net",
+    "io-util",
+    "fs",
+    "process",
+] }
+
+# ── SSH / SFTP ────────────────────────────────────────────────────────────────
+# `ring` instead of the default `aws-lc-rs` keeps the build free of CMake/aws-lc-sys.
+russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh-sftp = "3"
+
+# ── terminal emulation ────────────────────────────────────────────────────────
+vt100 = "0.16"
+
+# ── storage ───────────────────────────────────────────────────────────────────
+rusqlite = { version = "0.40", features = ["bundled"] }
+
+# ── crypto for stored secrets ─────────────────────────────────────────────────
+aes-gcm = "0.11"
+argon2 = "0.6"
+rand = "0.10"
+rand_core = { version = "0.6", features = ["getrandom"] }
+rsa = "0.9"
+sha1 = { version = "0.10", features = ["oid"] }
+
+# ── archives (directory transfers) ────────────────────────────────────────────
+tar = "0.4"
+flate2 = "1"
+
+# ── misc ──────────────────────────────────────────────────────────────────────
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+dirs = "7"
+parking_lot = "0.12"
+anyhow = "1"
+thiserror = "2"
+base64 = "0.23"
+arboard = "3"
+png = "0.18"
+log = "0.4"
+env_logger = "0.11"
+
+# Dev profile: optimised enough for smooth terminal rendering, but without
+# debug info or incremental artefacts so `target/` stays reasonably small.
+[profile.dev]
+opt-level = 1
+debug = false
+incremental = false
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

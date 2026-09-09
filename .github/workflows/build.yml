@@ -1,0 +1,143 @@
+name: build
+
+# Pushing a tag (v*) rebuilds all three packages. No GitHub Release is created —
+# the binaries are attached to the workflow run as downloadable artifacts.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-universal
+            os: macos-latest
+            artifact: TinyTerm-macos-universal
+            archive: TinyTerm-macos-universal.zip
+          - name: linux-x86_64
+            os: ubuntu-latest
+            artifact: TinyTerm-linux-x86_64
+            archive: TinyTerm-linux-x86_64.tar.gz
+          - name: windows-x86_64
+            os: windows-latest
+            artifact: TinyTerm-windows-x86_64
+            archive: TinyTerm-windows-x86_64.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      # ── Linux build dependencies (X11 + Wayland + GL for eframe/glow) ──────
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            pkg-config
+
+      - name: Tests
+        run: cargo test --release --locked
+
+      # ── macOS: build both architectures and fuse them with lipo ────────────
+      - name: Add macOS targets
+        if: matrix.name == 'macos-universal'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Build (macOS arm64)
+        if: matrix.name == 'macos-universal'
+        run: cargo build --release --locked --target aarch64-apple-darwin
+
+      - name: Build (macOS x86_64)
+        if: matrix.name == 'macos-universal'
+        run: cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: Package macOS .app (universal)
+        if: matrix.name == 'macos-universal'
+        run: |
+          set -euo pipefail
+          APP="dist/TinyTerm.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          lipo -create -output "$APP/Contents/MacOS/TinyTerm" \
+            target/aarch64-apple-darwin/release/tinyterm-egui \
+            target/x86_64-apple-darwin/release/tinyterm-egui
+          cp assets/icon.icns "$APP/Contents/Resources/AppIcon.icns"
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>TinyTerm</string>
+            <key>CFBundleDisplayName</key><string>TinyTerm</string>
+            <key>CFBundleExecutable</key><string>TinyTerm</string>
+            <key>CFBundleIdentifier</key><string>com.tinyterm.egui</string>
+            <key>CFBundleIconFile</key><string>AppIcon</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>0.1.0</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          (cd dist && zip -q -r "../${{ matrix.archive }}" TinyTerm.app)
+
+      # ── Linux / Windows ───────────────────────────────────────────────────
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cargo build --release --locked
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --release --locked
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/release/tinyterm-egui dist/TinyTerm
+          tar -czf "${{ matrix.archive }}" -C dist TinyTerm
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/tinyterm-egui.exe dist/TinyTerm.exe
+          Compress-Archive -Path dist/TinyTerm.exe -DestinationPath "${{ matrix.archive }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.archive }}
+          if-no-files-found: error
