@@ -40,7 +40,8 @@ InstallDir "$LOCALAPPDATA\Programs\${APP_NAME}"
 InstallDirRegKey HKCU "Software\${APP_NAME}" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
-SetShellVarContext current
+; SetShellVarContext may only be used inside a Section or Function, so each
+; section below sets it (the default context is already the current user).
 
 VIProductVersion "${APP_VERSION}.0"
 VIAddVersionKey "ProductName" "${APP_NAME}"
@@ -66,6 +67,7 @@ VIAddVersionKey "LegalCopyright" "MIT License"
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Install"
+  SetShellVarContext current
   SetOutPath "$INSTDIR"
   File "/oname=${APP_NAME}.exe" "${APP_EXE}"
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -91,6 +93,7 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
+  SetShellVarContext current
   ; Only the program files go away - the SQLite database with the user's hosts
   ; and encrypted credentials lives in %USERPROFILE%\.tinyterm-egui and is kept.
   Delete "$INSTDIR\${APP_NAME}.exe"
