@@ -42,12 +42,7 @@ PLIST
 
 echo "==> creating DMG"
 DMG="$ROOT/target/release/$APP_NAME.dmg"
-rm -rf "$ROOT/target/release/dmg-stage"
-mkdir -p "$ROOT/target/release/dmg-stage"
-cp -R "$BUNDLE" "$ROOT/target/release/dmg-stage/"
-ln -s /Applications "$ROOT/target/release/dmg-stage/Applications"
-hdiutil create -volname "$APP_NAME" -srcfolder "$ROOT/target/release/dmg-stage" \
-  -ov -format UDZO "$DMG"
+"$ROOT/scripts/make-dmg.sh" "$BUNDLE" "$DMG" "$APP_NAME"
 
 echo "==> done"
 echo "    app: $BUNDLE"

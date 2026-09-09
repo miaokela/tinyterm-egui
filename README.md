@@ -115,11 +115,37 @@ macOS 说明：winit 在 macOS 上**不支持** `set_window_icon`，Dock/Finder 
 `.app` 包里的 `.icns`。因此提供了一个打包脚本：
 
 ```bash
-./scripts/bundle-macos.sh      # 生成 target/release/TinyTerm.app
+./scripts/bundle-macos.sh      # 生成 target/release/TinyTerm.app 和 TinyTerm.dmg
 open target/release/TinyTerm.app
 ```
 
 打包后 Dock 与 Finder 中就会显示原版图标。
+
+### DMG 安装界面
+
+`scripts/make-dmg.sh` 生成带背景图的拖拽安装盘：左侧是 TinyTerm，右侧是
+`/Applications` 别名，背景图底部给出两种 Gatekeeper 拦截的解决办法。
+
+| 文件 | 用途 |
+|---|---|
+| `assets/dmg-background.png` / `@2x.png` | 660×440 / 1320×880 背景图 |
+| `scripts/make-dmg-background.swift` | 背景图生成器（改文案后重新运行即可） |
+| `scripts/make-dmg.sh` | 组装 `.app` → UDRW 镜像 → Finder 布局 → UDZO |
+
+```bash
+swift scripts/make-dmg-background.swift          # 重新生成背景图
+scripts/make-dmg.sh dist/TinyTerm.app out.dmg    # 打包
+```
+
+布局靠 AppleScript 驱动 Finder 写入 `.DS_Store`；若当前环境不允许自动化控制
+Finder，脚本会照常产出 DMG，只是没有背景图和图标位置（会打印 warning）。
+
+因为构建产物未做 Apple 签名与公证，用户首次打开会遇到两种情况，背景图里都写了：
+
+1. **「TinyTerm 已损坏，无法打开」** —— 从浏览器下载的文件带 quarantine 属性，
+   打开「终端」执行 `xattr -cr /Applications/TinyTerm.app` 即可。
+2. **「无法验证开发者」** —— 点「完成」关闭弹窗，再到
+   系统设置 → 隐私与安全性，找到 TinyTerm 点「仍要打开」。
 
 ## 与原版的差异（有意为之）
 

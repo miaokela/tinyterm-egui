@@ -108,16 +108,11 @@ jobs:
           </dict>
           </plist>
           PLIST
-          # Drag-to-install layout: the app plus an /Applications shortcut.
-          rm -rf dmg-stage
-          mkdir -p dmg-stage
-          cp -R "$APP" dmg-stage/
-          ln -s /Applications dmg-stage/Applications
-          hdiutil create \
-            -volname "TinyTerm" \
-            -srcfolder dmg-stage \
-            -ov -format UDZO \
-            "${{ matrix.archive }}"
+          # Drag-to-install layout: artwork + the app next to an /Applications
+          # alias. make-dmg.sh drives Finder to write the .DS_Store that carries
+          # the background picture and the icon positions.
+          chmod +x scripts/make-dmg.sh
+          scripts/make-dmg.sh dist/TinyTerm.app "${{ matrix.archive }}" TinyTerm
           echo "dmg: $(du -h "${{ matrix.archive }}" | cut -f1)"
 
       # ── Linux / Windows ───────────────────────────────────────────────────
