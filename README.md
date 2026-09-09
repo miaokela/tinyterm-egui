@@ -45,6 +45,9 @@ tinyterm-egui/
 
 ## 构建与运行
 
+> 改造本项目前先读 `skills/tinyterm-egui-dev/SKILL.md`：里面沉淀了设计令牌、布局常量、
+> SSH/SFTP 事件契约、打包流水线，以及一路踩过的坑（`-1728`、`crt-static`、wgpu 等）。
+
 需要 Rust 1.85+（开发使用 nightly 1.100）。
 
 ```bash
