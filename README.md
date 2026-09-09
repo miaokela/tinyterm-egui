@@ -3,6 +3,8 @@
 TinyTerm 的 **egui / eframe** 重写版本 —— 一个纯 Rust 的桌面 SSH 客户端，视觉与交互对齐原版
 Tauri + React 实现（cosmic / glassmorphism 主题）。
 
+![TinyTerm 主界面：左侧主机列表，中间终端，右侧本地/远端文件管理](assets/screenshot.png)
+
 ```
 tinyterm-egui/
 ├── Cargo.toml
@@ -110,6 +112,7 @@ cargo test
 | `assets/icon.png` | `src-tauri/icons/icon.png`（512×512） | 窗口图标（`ViewportBuilder::with_icon`） |
 | `assets/logo.png` | `public/assets/logo.png`（512×512） | 空状态 / 空会话里的 logo 贴图 |
 | `assets/icon.icns` | `src-tauri/icons/icon.icns` | macOS `.app` 包图标 |
+| `assets/screenshot.png` | 本机运行截图 | README 界面预览 |
 
 macOS 说明：winit 在 macOS 上**不支持** `set_window_icon`，Dock/Finder 图标只能来自
 `.app` 包里的 `.icns`。因此提供了一个打包脚本：
