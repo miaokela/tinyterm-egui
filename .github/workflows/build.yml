@@ -15,22 +15,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: macos-universal
-            os: macos-latest
-            artifact: TinyTerm-macos-universal
-            archive: TinyTerm-macos-universal.dmg
-          - name: windows-x86_64
-            os: windows-latest
-            artifact: TinyTerm-windows-x86_64
-            archive: TinyTerm-windows-x86_64-setup.exe
-
+  # ── macOS: universal .app (arm64 + x86_64) wrapped in a styled .dmg ────────
+  macos:
+    name: macos-universal
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -40,26 +28,21 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.name }}
+          key: macos-universal
 
       - name: Tests
         run: cargo test --release --locked
 
-      # ── macOS: build both architectures and fuse them with lipo ────────────
       - name: Add macOS targets
-        if: matrix.name == 'macos-universal'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
-      - name: Build (macOS arm64)
-        if: matrix.name == 'macos-universal'
+      - name: Build (arm64)
         run: cargo build --release --locked --target aarch64-apple-darwin
 
-      - name: Build (macOS x86_64)
-        if: matrix.name == 'macos-universal'
+      - name: Build (x86_64)
         run: cargo build --release --locked --target x86_64-apple-darwin
 
-      - name: Package macOS .dmg (universal)
-        if: matrix.name == 'macos-universal'
+      - name: Package .dmg (universal)
         run: |
           set -euo pipefail
           APP="dist/TinyTerm.app"
@@ -86,18 +69,41 @@ jobs:
           </dict>
           </plist>
           PLIST
+          # Version from Cargo.toml instead of a second hard-coded copy.
+          VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          sed -i '' -e "s|<string>0.1.0</string>|<string>$VERSION</string>|g" "$APP/Contents/Info.plist"
           # Drag-to-install layout: artwork + the app next to an /Applications
           # alias. make-dmg.sh drives Finder to write the .DS_Store that carries
           # the background picture and the icon positions.
-          VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-          sed -i '' -e "s|<string>0.1.0</string>|<string>$VERSION</string>|g" "$APP/Contents/Info.plist"
-          chmod +x scripts/make-dmg.sh
-          scripts/make-dmg.sh dist/TinyTerm.app "${{ matrix.archive }}" TinyTerm
-          echo "dmg: $(du -h "${{ matrix.archive }}" | cut -f1)"
+          scripts/make-dmg.sh "$APP" TinyTerm-macos-universal.dmg TinyTerm
+          echo "dmg: $(du -h TinyTerm-macos-universal.dmg | cut -f1)"
 
-      # ── Windows: static CRT build (see .cargo/config.toml) + NSIS setup ────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TinyTerm-macos-universal
+          path: TinyTerm-macos-universal.dmg
+          if-no-files-found: error
+
+  # ── Windows: static-CRT .exe (see .cargo/config.toml) wrapped in an NSIS ──
+  windows:
+    name: windows-x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x86_64
+
+      - name: Tests
+        run: cargo test --release --locked
+
       - name: Install NSIS
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
@@ -106,12 +112,10 @@ jobs:
           }
           if (-not (Test-Path $makensis)) { throw "makensis not found at $makensis" }
 
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
+      - name: Build
         run: cargo build --release --locked
 
-      - name: Package Windows installer
-        if: runner.os == 'Windows'
+      - name: Package installer
         shell: pwsh
         run: |
           $version = (cargo metadata --format-version 1 --no-deps --locked |
@@ -121,16 +125,18 @@ jobs:
           & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" `
             "/DAPP_VERSION=$version" `
             "/DAPP_EXE=$root\target\release\tinyterm-egui.exe" `
-            "/DOUT_FILE=$root\${{ matrix.archive }}" `
+            "/DOUT_FILE=$root\TinyTerm-windows-x86_64-setup.exe" `
             "/DICON_FILE=$root\assets\icon.ico" `
             "$root\scripts\windows-installer.nsi"
           if ($LASTEXITCODE -ne 0) { throw "makensis failed (exit $LASTEXITCODE)" }
-          if (-not (Test-Path "${{ matrix.archive }}")) { throw "installer not produced" }
-          Get-Item "${{ matrix.archive }}" | Select-Object Name, Length
+          if (-not (Test-Path "TinyTerm-windows-x86_64-setup.exe")) {
+            throw "installer not produced"
+          }
+          Get-Item "TinyTerm-windows-x86_64-setup.exe" | Select-Object Name, Length
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.archive }}
+          name: TinyTerm-windows-x86_64
+          path: TinyTerm-windows-x86_64-setup.exe
           if-no-files-found: error
