@@ -85,7 +85,8 @@ fn run() -> Result<()> {
     state.load_all();
 
     // ── Window ───────────────────────────────────────────────────────────────
-    let options = eframe::NativeOptions {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("TinyTerm")
             .with_inner_size([1100.0, 720.0])
@@ -95,8 +96,21 @@ fn run() -> Result<()> {
         ..Default::default()
     };
 
+    #[cfg(windows)]
+    {
+        // The glow backend needs OpenGL 2.0+, which a remote-desktop session or a
+        // GPU-less cloud VM does not provide (Windows then only exposes the GDI
+        // OpenGL 1.1 software renderer), and the app would exit without ever
+        // showing a window. wgpu can fall back to the D3D12 software rasterizer.
+        options.renderer = eframe::Renderer::Wgpu;
+        options.wgpu_options.wgpu_setup = wgpu_setup_with_software_fallback();
+        log::info!("renderer: wgpu (DX12, hardware preferred, software fallback)");
+    }
+    #[cfg(not(windows))]
+    log::info!("renderer: glow (OpenGL)");
+
     let bus_for_app = state.mgr.bus.clone();
-    log::info!("creating the window (renderer: glow/OpenGL)");
+    log::info!("creating the window");
     let result = eframe::run_native(
         "TinyTerm",
         options,
@@ -112,16 +126,59 @@ fn run() -> Result<()> {
     write_zoom(app_zoom);
     drop(runtime);
 
-    // The glow backend needs a real OpenGL 2.0+ driver. On a VM or an RDP
-    // session Windows may only offer the 1.1 software renderer, and this is the
-    // error that used to make the app close without any explanation.
+    // Window/graphics-session failures used to end the process silently; the
+    // dialog in logging::fatal now shows this text.
     result.map_err(|e| {
         anyhow::anyhow!(
             "无法创建窗口：{e}\n\n\
-             最常见的原因是显卡驱动不支持 OpenGL 2.0（虚拟机 / 远程桌面里很常见）。\n\
-             请安装显卡驱动，或改用支持 OpenGL 的图形会话后重试。"
+             显卡驱动/图形会话不满足要求。若在远程桌面或虚拟机里运行，\n\
+             请确认已安装显卡驱动，或换用带 GPU 的图形会话。"
         )
     })
+}
+
+/// wgpu setup that still works without a GPU.
+///
+/// egui-wgpu's default adapter request only accepts hardware adapters, so on a
+/// machine with none (a remote-desktop session, a bare cloud VM) it fails and
+/// the window never appears. This selector prefers a real GPU but falls back to
+/// the software rasterizer (WARP), which is what makes TinyTerm usable over RDP.
+#[cfg(windows)]
+fn wgpu_setup_with_software_fallback() -> eframe::egui_wgpu::WgpuSetup {
+    use eframe::egui_wgpu::{NativeAdapterSelectorMethod, WgpuSetup, WgpuSetupCreateNew};
+    use eframe::wgpu;
+
+    let selector: NativeAdapterSelectorMethod = std::sync::Arc::new(|adapters, surface| {
+        let rank = |adapter: &wgpu::Adapter| match adapter.get_info().device_type {
+            wgpu::DeviceType::DiscreteGpu => 0,
+            wgpu::DeviceType::IntegratedGpu => 1,
+            wgpu::DeviceType::VirtualGpu => 2,
+            wgpu::DeviceType::Cpu => 3,
+            _ => 4,
+        };
+        let chosen = adapters
+            .iter()
+            .filter(|adapter| surface.map_or(true, |s| adapter.is_surface_supported(s)))
+            .min_by_key(|adapter| rank(adapter))
+            .cloned();
+        match chosen {
+            Some(adapter) => {
+                let info = adapter.get_info();
+                log::info!(
+                    "wgpu adapter: {} ({:?}, {:?})",
+                    info.name,
+                    info.device_type,
+                    info.backend
+                );
+                Ok(adapter)
+            }
+            None => Err("no usable wgpu adapter (no GPU and no software rasterizer)".to_owned()),
+        }
+    });
+
+    let mut setup = WgpuSetupCreateNew::without_display_handle();
+    setup.native_adapter_selector = Some(selector);
+    WgpuSetup::CreateNew(setup)
 }
 
 fn zoom_path() -> std::path::PathBuf {

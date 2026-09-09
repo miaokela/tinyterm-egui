@@ -184,6 +184,11 @@ exe，安装包因此不依赖任何额外组件。`main.rs` 里的
 `#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]`
 则保证 release 版不弹控制台窗口。
 
+**关于远程桌面/虚拟机里打不开**：Windows 版默认用 **wgpu** 渲染（DX12），并且自定义
+了适配器选择——优先独显/集显，没有可用 GPU 时退到软件光栅化（WARP），所以远程桌面
+会话和无 GPU 的云主机也能正常启动；macOS/Linux 仍然用 glow/OpenGL。
+启动日志写在 `%USERPROFILE%\.tinyterm-egui\tinyterm.log`，致命错误会弹原生对话框。
+
 ## 与原版的差异（有意为之）
 
 1. 终端仿真使用 `vt100` 而非 xterm.js；已覆盖常用 VT100/xterm 序列。
