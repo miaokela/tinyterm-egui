@@ -583,17 +583,26 @@ fn ui_text_metrics_are_script_independent() {
 
     let ctx = egui::Context::default();
     crate::theme::install_fonts(&ctx, "Menlo", 12.0);
+
+    // egui only exposes fonts after one pass has run ("No fonts available until
+    // first call to Context::run()"), so measure inside `run_ui`.
     let font = crate::theme::f_sm();
-    let measure = |text: &str| {
+    let measure = |ctx: &egui::Context, text: &str| {
         ctx.fonts_mut(|f| {
             f.layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
                 .size()
                 .y
         })
     };
-    let latin = measure("ABC");
-    let cjk = measure("中文测试");
-    let mixed = measure("ABC 中文");
+    let mut latin = 0.0;
+    let mut cjk = 0.0;
+    let mut mixed = 0.0;
+    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let ctx = ui.ctx();
+        latin = measure(ctx, "ABC");
+        cjk = measure(ctx, "中文测试");
+        mixed = measure(ctx, "ABC 中文");
+    });
     assert!(latin > 0.0 && cjk > 0.0, "empty layout: {latin} {cjk}");
     assert!(
         (latin - cjk).abs() < 0.51,

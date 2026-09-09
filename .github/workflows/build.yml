@@ -25,7 +25,7 @@ jobs:
           - name: macos-universal
             os: macos-latest
             artifact: TinyTerm-macos-universal
-            archive: TinyTerm-macos-universal.zip
+            archive: TinyTerm-macos-universal.dmg
           - name: linux-x86_64
             os: ubuntu-latest
             artifact: TinyTerm-linux-x86_64
@@ -80,7 +80,7 @@ jobs:
         if: matrix.name == 'macos-universal'
         run: cargo build --release --locked --target x86_64-apple-darwin
 
-      - name: Package macOS .app (universal)
+      - name: Package macOS .dmg (universal)
         if: matrix.name == 'macos-universal'
         run: |
           set -euo pipefail
@@ -108,7 +108,17 @@ jobs:
           </dict>
           </plist>
           PLIST
-          (cd dist && zip -q -r "../${{ matrix.archive }}" TinyTerm.app)
+          # Drag-to-install layout: the app plus an /Applications shortcut.
+          rm -rf dmg-stage
+          mkdir -p dmg-stage
+          cp -R "$APP" dmg-stage/
+          ln -s /Applications dmg-stage/Applications
+          hdiutil create \
+            -volname "TinyTerm" \
+            -srcfolder dmg-stage \
+            -ov -format UDZO \
+            "${{ matrix.archive }}"
+          echo "dmg: $(du -h "${{ matrix.archive }}" | cut -f1)"
 
       # ── Linux / Windows ───────────────────────────────────────────────────
       - name: Build (Linux)
