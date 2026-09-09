@@ -1,6 +1,6 @@
 name: build
 
-# Pushing a tag (v*) rebuilds all three packages. No GitHub Release is created —
+# Pushing a tag (v*) rebuilds both packages. No GitHub Release is created —
 # the binaries are attached to the workflow run as downloadable artifacts.
 on:
   push:
@@ -26,14 +26,10 @@ jobs:
             os: macos-latest
             artifact: TinyTerm-macos-universal
             archive: TinyTerm-macos-universal.dmg
-          - name: linux-x86_64
-            os: ubuntu-latest
-            artifact: TinyTerm-linux-x86_64
-            archive: TinyTerm-linux-x86_64.tar.gz
           - name: windows-x86_64
             os: windows-latest
             artifact: TinyTerm-windows-x86_64
-            archive: TinyTerm-windows-x86_64.zip
+            archive: TinyTerm-windows-x86_64-setup.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -45,24 +41,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.name }}
-
-      # ── Linux build dependencies (X11 + Wayland + GL for eframe/glow) ──────
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
-            libwayland-dev \
-            libx11-dev \
-            libxcursor-dev \
-            libxrandr-dev \
-            libxi-dev \
-            libxinerama-dev \
-            libgl1-mesa-dev \
-            libegl1-mesa-dev \
-            pkg-config
 
       - name: Tests
         run: cargo test --release --locked
@@ -111,34 +89,44 @@ jobs:
           # Drag-to-install layout: artwork + the app next to an /Applications
           # alias. make-dmg.sh drives Finder to write the .DS_Store that carries
           # the background picture and the icon positions.
+          VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          sed -i '' -e "s|<string>0.1.0</string>|<string>$VERSION</string>|g" "$APP/Contents/Info.plist"
           chmod +x scripts/make-dmg.sh
           scripts/make-dmg.sh dist/TinyTerm.app "${{ matrix.archive }}" TinyTerm
           echo "dmg: $(du -h "${{ matrix.archive }}" | cut -f1)"
 
-      # ── Linux / Windows ───────────────────────────────────────────────────
-      - name: Build (Linux)
-        if: runner.os == 'Linux'
-        run: cargo build --release --locked
+      # ── Windows: static CRT build (see .cargo/config.toml) + NSIS setup ────
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            choco install nsis -y --no-progress
+          }
+          if (-not (Test-Path $makensis)) { throw "makensis not found at $makensis" }
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
         run: cargo build --release --locked
 
-      - name: Package Linux
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          cp target/release/tinyterm-egui dist/TinyTerm
-          tar -czf "${{ matrix.archive }}" -C dist TinyTerm
-
-      - name: Package Windows
+      - name: Package Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/release/tinyterm-egui.exe dist/TinyTerm.exe
-          Compress-Archive -Path dist/TinyTerm.exe -DestinationPath "${{ matrix.archive }}"
+          $version = (cargo metadata --format-version 1 --no-deps --locked |
+            ConvertFrom-Json).packages[0].version
+          $root = (Get-Location).Path
+          Write-Host "building TinyTerm $version installer"
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" `
+            "/DAPP_VERSION=$version" `
+            "/DAPP_EXE=$root\target\release\tinyterm-egui.exe" `
+            "/DOUT_FILE=$root\${{ matrix.archive }}" `
+            "/DICON_FILE=$root\assets\icon.ico" `
+            "$root\scripts\windows-installer.nsi"
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed (exit $LASTEXITCODE)" }
+          if (-not (Test-Path "${{ matrix.archive }}")) { throw "installer not produced" }
+          Get-Item "${{ matrix.archive }}" | Select-Object Name, Length
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

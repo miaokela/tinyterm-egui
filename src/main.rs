@@ -4,6 +4,9 @@
 // some fields/methods exist for schema compatibility and future wiring rather
 // than for the current UI. Silence dead-code noise for those.
 #![allow(dead_code)]
+// Windows GUI app: without this the release .exe opens a console window behind
+// the main window. Debug builds keep the console so logs stay visible.
+#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 
 mod actions;
 mod assets;

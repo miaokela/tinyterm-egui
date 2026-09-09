@@ -11,6 +11,10 @@ license = "MIT"
 name = "tinyterm-egui"
 path = "src/main.rs"
 
+# Windows only: embeds assets/icon.ico + version info into the .exe (see build.rs).
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [dependencies]
 # ── UI ────────────────────────────────────────────────────────────────────────
 # `x11` + `wayland` are required by winit on Linux: without them winit has no

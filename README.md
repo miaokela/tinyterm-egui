@@ -112,19 +112,28 @@ cargo test
 | `assets/icon.png` | `src-tauri/icons/icon.png`（512×512） | 窗口图标（`ViewportBuilder::with_icon`） |
 | `assets/logo.png` | `public/assets/logo.png`（512×512） | 空状态 / 空会话里的 logo 贴图 |
 | `assets/icon.icns` | `src-tauri/icons/icon.icns` | macOS `.app` 包图标 |
+| `assets/icon.ico` | 由 `icon.png` 生成（16–256 全尺寸） | Windows exe 图标 + NSIS 安装包图标 |
 | `assets/screenshot.png` | 本机运行截图 | README 界面预览 |
 
 macOS 说明：winit 在 macOS 上**不支持** `set_window_icon`，Dock/Finder 图标只能来自
-`.app` 包里的 `.icns`。因此提供了一个打包脚本：
+`.app` 包里的 `.icns`，所以图标必须靠打包脚本写进 bundle（见下节）。
+
+## 打包与分发
+
+GitHub Actions 在推送 `v*` tag 时构建两个产物（**不创建 Release**，产物在 Actions
+页面的 Artifacts 里下载）：
+
+| 平台 | 产物 | 说明 |
+|---|---|---|
+| macOS 通用版 | `TinyTerm-macos-universal.dmg` | arm64 + x86_64 用 `lipo` 合并，带背景图的拖拽安装盘 |
+| Windows x86_64 | `TinyTerm-windows-x86_64-setup.exe` | NSIS 安装包，按用户安装，不需要管理员权限 |
+
+### macOS
 
 ```bash
 ./scripts/bundle-macos.sh      # 生成 target/release/TinyTerm.app 和 TinyTerm.dmg
 open target/release/TinyTerm.app
 ```
-
-打包后 Dock 与 Finder 中就会显示原版图标。
-
-### DMG 安装界面
 
 `scripts/make-dmg.sh` 生成带背景图的拖拽安装盘：左侧是 TinyTerm，右侧是
 `/Applications` 别名，背景图底部给出两种 Gatekeeper 拦截的解决办法。
@@ -149,6 +158,31 @@ Finder，脚本会照常产出 DMG，只是没有背景图和图标位置（会�
    打开「终端」执行 `xattr -cr /Applications/TinyTerm.app` 即可。
 2. **「无法验证开发者」** —— 点「完成」关闭弹窗，再到
    系统设置 → 隐私与安全性，找到 TinyTerm 点「仍要打开」。
+
+### Windows
+
+| 文件 | 用途 |
+|---|---|
+| `scripts/windows-installer.nsi` | NSIS 脚本：安装到 `%LOCALAPPDATA%\Programs\TinyTerm`，创建开始菜单/桌面快捷方式，写入「应用和功能」卸载项 |
+| `.cargo/config.toml` | 为 Windows 目标打开 `+crt-static`（见下） |
+| `build.rs` | 用 `winresource` 把 `assets/icon.ico` 和版本信息嵌进 exe（非 Windows 平台跳过） |
+| `assets/icon.ico` | 由 `scripts/make-windows-icon.swift` 从 `assets/icon.png` 生成 |
+
+```powershell
+cargo build --release
+makensis /DAPP_VERSION=0.1.0 `
+  /DAPP_EXE="$PWD\target\release\tinyterm-egui.exe" `
+  /DOUT_FILE="$PWD\TinyTerm-0.1.0-setup.exe" `
+  /DICON_FILE="$PWD\assets\icon.ico" `
+  scripts\windows-installer.nsi
+```
+
+**关于 `VCRUNTIME140.dll was not found`**：MSVC 目标默认动态链接 VC 运行库，没装
+VC++ Redistributable 的机器上直接跑 exe 就会报这个错。`.cargo/config.toml` 给
+`x86_64-pc-windows-msvc` 加了 `-C target-feature=+crt-static`，把运行库静态链进
+exe，安装包因此不依赖任何额外组件。`main.rs` 里的
+`#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]`
+则保证 release 版不弹控制台窗口。
 
 ## 与原版的差异（有意为之）
 

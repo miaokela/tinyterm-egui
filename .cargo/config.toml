@@ -1,0 +1,11 @@
+# Windows: link the C runtime statically.
+#
+# The MSVC target links vcruntime140.dll / msvcp140.dll dynamically by default,
+# so a machine without the Visual C++ Redistributable fails to start the .exe
+# with "VCRUNTIME140.dll was not found". +crt-static embeds the runtime in the
+# binary, which makes the installer self-contained.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
