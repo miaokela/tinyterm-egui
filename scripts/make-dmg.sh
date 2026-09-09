@@ -42,7 +42,9 @@ mkdir -p "$STAGE/.background" "$MOUNT"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 cp "$BG" "$STAGE/.background/background.png"
-[[ -f "$BG2X" ]] && cp "$BG2X" "$STAGE/.background/background@2x.png"
+if [[ -f "$BG2X" ]]; then
+  cp "$BG2X" "$STAGE/.background/background@2x.png"
+fi
 
 # ── write the layout script ──────────────────────────────────────────────────
 # Coordinates are in the background artwork's own space: the icon band sits at
