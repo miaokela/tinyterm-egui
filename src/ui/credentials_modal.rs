@@ -91,7 +91,7 @@ fn list(ui: &mut Ui, app: &mut AppState, screen: Rect) {
         Vec2::splat(30.0),
     );
     let mut add_ui = ui.new_child(egui::UiBuilder::new().max_rect(add_rect));
-    let r_add = widgets::primary_orb_button(&mut add_ui, 30.0, |p, r, c| {
+    let r_add = widgets::orb_button(&mut add_ui, 30.0, |p, r, c| {
         widgets::plus(p, r.center(), 13.0, c)
     })
     .on_hover_text("新增凭据");

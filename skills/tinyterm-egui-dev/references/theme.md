@@ -147,8 +147,7 @@ All controls allocate their own rect and paint themselves; they return
 | `primary_button(ui, label, enabled)` | 30 px tall, width = text + 40, accent fill, glow on hover, 3 disabled states |
 | `ghost_button(ui, label, enabled)` | transparent fill + border, used for every dialog action (「取消」等) |
 | `button_row(ui, rect, &[(label, enabled)]) -> Option<usize>` | right-aligned dialog action row; returns the clicked index |
-| `orb_button(ui, size, draw)` | ghost circular icon button: nearly transparent at rest, with four rotating HUD brackets inside the rim; hover adds accent tint, accent border, glow and a brighter glyph (host-row 连接, collapse toggles) |
-| `primary_orb_button(ui, size, draw)` | accent-filled orb for a panel's primary action (新增主机 / 新增凭据): solid disc, bright rim, a radar sweep along the rim and a breathing halo — keep the centre clear for the glyph. Use it instead of filling a circle by hand |
+| `orb_button(ui, size, draw)` | the one circular icon button: nearly transparent at rest, four slowly rotating HUD brackets inside the rim; hover adds accent tint, accent border, glow and a brighter glyph. Used by both the 连接 row action and the 新增 toolbar action — they deliberately share one style rather than making the toolbar action "primary" |
 | `tick_ring(painter, center, radius, color, width, segments, span, phase)` | private helper behind both orbs — a ring of short arc segments; `phase` spins it (`ui.input(\|i\| i.time)`), which works because the app already repaints at ~30 fps for the drifting background |
 | `tint(color, alpha)` | premultiplied translucent variant of a theme colour; use it rather than `from_rgba_unmultiplied`, which reads muddy through the painter |
 | `text_input(ui, value, placeholder, width, password)` | 30 px tall, `BG_INPUT` fill, accent border when focused |

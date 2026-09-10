@@ -115,14 +115,6 @@ pub fn tint(color: Color32, alpha: f32) -> Color32 {
     )
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum OrbKind {
-    /// Row action: invisible until hovered.
-    Ghost,
-    /// Panel primary action: filled accent, always visible.
-    Primary,
-}
-
 /// A ring of short arc segments — the "machined" detail that gives the orb
 /// buttons their HUD look. `phase` rotates the whole ring, `span` is the length
 /// of one segment in radians.
@@ -152,37 +144,16 @@ fn tick_ring(
 }
 
 /// Frosted circular icon button used by the Hosts/Credentials toolbars and host
-/// rows.
+/// rows — every orb looks the same, so a toolbar action and a row action carry
+/// equal visual weight.
 ///
 /// Idle it stays nearly transparent so a list of rows does not turn into a wall
 /// of buttons; on hover it takes an accent tint, an accent border, a soft glow
-/// and a brighter glyph, which is enough to read as "this row can connect".
-/// A slowly rotating tick ring inside the rim keeps it feeling powered.
+/// and a brighter glyph. A slowly rotating HUD bracket ring inside the rim keeps
+/// it feeling powered.
 pub fn orb_button(
     ui: &mut Ui,
     size: f32,
-    draw: impl FnOnce(&egui::Painter, Rect, Color32),
-) -> Response {
-    orb_button_impl(ui, size, OrbKind::Ghost, draw)
-}
-
-/// Accent-filled orb for a panel's primary action (e.g. 新增主机).
-///
-/// Reads as a power core: solid accent disc, bright rim, eight machined dashes
-/// around the glyph and a breathing halo so it stays the brightest control in
-/// the toolbar without flashing.
-pub fn primary_orb_button(
-    ui: &mut Ui,
-    size: f32,
-    draw: impl FnOnce(&egui::Painter, Rect, Color32),
-) -> Response {
-    orb_button_impl(ui, size, OrbKind::Primary, draw)
-}
-
-fn orb_button_impl(
-    ui: &mut Ui,
-    size: f32,
-    kind: OrbKind,
     draw: impl FnOnce(&egui::Painter, Rect, Color32),
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
@@ -197,105 +168,46 @@ fn orb_button_impl(
     let center = rect.center();
     let radius = size * 0.5 - 1.0;
     let glow_radius = (size * 0.5).round().clamp(0.0, 255.0) as u8;
-    // Constant, slow rotation: never snaps when the pointer leaves.
-    let phase = time * 0.25;
 
-    let (fill, rim, glyph) = match kind {
-        OrbKind::Primary => {
-            let fill = if !enabled {
-                tint(theme::ACCENT, 0.3)
-            } else if pressed {
-                theme::ACCENT_ACTIVE
-            } else if hovered {
-                theme::ACCENT_HOVER
-            } else {
-                theme::ACCENT
-            };
-            if enabled {
-                let pulse = 0.5 + 0.2 * (time * 1.6).sin();
-                theme::glow(
-                    painter,
-                    rect,
-                    glow_radius,
-                    theme::ACCENT,
-                    if hovered { 1.1 } else { pulse },
-                );
-            }
-            (
-                fill,
-                tint(theme::ACCENT_LIGHT, if hovered { 0.95 } else { 0.7 }),
-                if enabled {
-                    Color32::WHITE
-                } else {
-                    tint(Color32::WHITE, 0.6)
-                },
-            )
-        }
-        OrbKind::Ghost => {
-            let fill = if !enabled {
-                tint(theme::BG_CARD, 0.25)
-            } else if pressed {
-                tint(theme::ACCENT, 0.34)
-            } else if hovered {
-                tint(theme::ACCENT, 0.22)
-            } else {
-                tint(theme::TEXT_PRIMARY, 0.04)
-            };
-            if hovered {
-                theme::glow(painter, rect, glow_radius, theme::ACCENT, 0.6);
-            }
-            (
-                fill,
-                if hovered {
-                    theme::BORDER_ACTIVE
-                } else {
-                    theme::BORDER
-                },
-                if !enabled {
-                    tint(theme::TEXT_MUTED, 0.6)
-                } else if hovered {
-                    theme::TEXT_PRIMARY
-                } else {
-                    theme::TEXT_SECONDARY
-                },
-            )
-        }
+    let fill = if !enabled {
+        tint(theme::BG_CARD, 0.25)
+    } else if pressed {
+        tint(theme::ACCENT, 0.34)
+    } else if hovered {
+        tint(theme::ACCENT, 0.22)
+    } else {
+        tint(theme::TEXT_PRIMARY, 0.04)
+    };
+    if hovered {
+        theme::glow(painter, rect, glow_radius, theme::ACCENT, 0.6);
+    }
+    let rim = if hovered {
+        theme::BORDER_ACTIVE
+    } else {
+        theme::BORDER
+    };
+    let glyph = if !enabled {
+        tint(theme::TEXT_MUTED, 0.6)
+    } else if hovered {
+        theme::TEXT_PRIMARY
+    } else {
+        theme::TEXT_SECONDARY
     };
 
     painter.circle_filled(center, radius, fill);
     painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, rim));
 
-    match kind {
-        OrbKind::Primary => {
-            // A radar sweep running along the rim, so the primary action reads
-            // as "powered" while the list beside it stays calm. No dashes here:
-            // the plus glyph needs the centre of the disc to itself.
-            let sweep: Vec<Pos2> = (0..=6)
-                .map(|k| {
-                    let a = time * 1.2 + 0.9 * (k as f32 / 6.0);
-                    center + Vec2::new(a.cos(), a.sin()) * (radius - 1.5)
-                })
-                .collect();
-            painter.add(egui::Shape::line(
-                sweep,
-                Stroke::new(
-                    1.5,
-                    tint(theme::ACCENT_LIGHT, if hovered { 0.95 } else { 0.6 }),
-                ),
-            ));
-        }
-        // Four diagonal brackets, the HUD "target" marks.
-        OrbKind::Ghost => tick_ring(
-            painter,
-            center,
-            radius - 3.0,
-            tint(theme::ACCENT, if hovered { 0.9 } else { 0.28 }),
-            1.0,
-            4,
-            0.42,
-            phase,
-        ),
-    }
+    // Four diagonal brackets, the HUD "target" marks, slowly rotating.
+    tick_ring(
+        painter,
+        center,
+        radius - 3.0,
+        tint(theme::ACCENT, if hovered { 0.9 } else { 0.28 }),
+        1.0,
+        4,
+        0.42,
+        time * 0.25,
+    );
 
     draw(painter, rect, glyph);
     response
