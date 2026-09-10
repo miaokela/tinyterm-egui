@@ -123,12 +123,41 @@ enum OrbKind {
     Primary,
 }
 
+/// A ring of short arc segments — the "machined" detail that gives the orb
+/// buttons their HUD look. `phase` rotates the whole ring, `span` is the length
+/// of one segment in radians.
+#[allow(clippy::too_many_arguments)]
+fn tick_ring(
+    painter: &egui::Painter,
+    center: Pos2,
+    radius: f32,
+    color: Color32,
+    width: f32,
+    segments: usize,
+    span: f32,
+    phase: f32,
+) {
+    const STEPS: usize = 4;
+    let step = std::f32::consts::TAU / segments as f32;
+    for i in 0..segments {
+        let from = phase + i as f32 * step;
+        let points: Vec<Pos2> = (0..=STEPS)
+            .map(|k| {
+                let a = from + span * (k as f32 / STEPS as f32);
+                center + Vec2::new(a.cos(), a.sin()) * radius
+            })
+            .collect();
+        painter.add(egui::Shape::line(points, Stroke::new(width, color)));
+    }
+}
+
 /// Frosted circular icon button used by the Hosts/Credentials toolbars and host
 /// rows.
 ///
 /// Idle it stays nearly transparent so a list of rows does not turn into a wall
 /// of buttons; on hover it takes an accent tint, an accent border, a soft glow
 /// and a brighter glyph, which is enough to read as "this row can connect".
+/// A slowly rotating tick ring inside the rim keeps it feeling powered.
 pub fn orb_button(
     ui: &mut Ui,
     size: f32,
@@ -138,6 +167,10 @@ pub fn orb_button(
 }
 
 /// Accent-filled orb for a panel's primary action (e.g. 新增主机).
+///
+/// Reads as a power core: solid accent disc, bright rim, eight machined dashes
+/// around the glyph and a breathing halo so it stays the brightest control in
+/// the toolbar without flashing.
 pub fn primary_orb_button(
     ui: &mut Ui,
     size: f32,
@@ -159,15 +192,18 @@ fn orb_button_impl(
     let enabled = ui.is_enabled();
     let hovered = enabled && response.hovered();
     let pressed = enabled && response.is_pointer_button_down_on();
+    let time = ui.input(|i| i.time) as f32;
     let painter = ui.painter();
     let center = rect.center();
-    let radius = size * 0.5;
-    let glow_radius = radius.round().clamp(0.0, 255.0) as u8;
+    let radius = size * 0.5 - 1.0;
+    let glow_radius = (size * 0.5).round().clamp(0.0, 255.0) as u8;
+    // Constant, slow rotation: never snaps when the pointer leaves.
+    let phase = time * 0.25;
 
-    let (fill, border, glyph) = match kind {
+    let (fill, rim, glyph) = match kind {
         OrbKind::Primary => {
             let fill = if !enabled {
-                tint(theme::ACCENT, 0.35)
+                tint(theme::ACCENT, 0.3)
             } else if pressed {
                 theme::ACCENT_ACTIVE
             } else if hovered {
@@ -175,13 +211,24 @@ fn orb_button_impl(
             } else {
                 theme::ACCENT
             };
-            if hovered {
-                theme::glow(painter, rect, glow_radius, theme::ACCENT_HOVER, 1.0);
+            if enabled {
+                let pulse = 0.5 + 0.2 * (time * 1.6).sin();
+                theme::glow(
+                    painter,
+                    rect,
+                    glow_radius,
+                    theme::ACCENT,
+                    if hovered { 1.1 } else { pulse },
+                );
             }
             (
                 fill,
-                tint(theme::ACCENT_LIGHT, if hovered { 0.9 } else { 0.55 }),
-                if enabled { Color32::WHITE } else { tint(Color32::WHITE, 0.6) },
+                tint(theme::ACCENT_LIGHT, if hovered { 0.95 } else { 0.7 }),
+                if enabled {
+                    Color32::WHITE
+                } else {
+                    tint(Color32::WHITE, 0.6)
+                },
             )
         }
         OrbKind::Ghost => {
@@ -195,11 +242,15 @@ fn orb_button_impl(
                 tint(theme::TEXT_PRIMARY, 0.04)
             };
             if hovered {
-                theme::glow(painter, rect, glow_radius, theme::ACCENT, 0.55);
+                theme::glow(painter, rect, glow_radius, theme::ACCENT, 0.6);
             }
             (
                 fill,
-                if hovered { theme::BORDER_ACTIVE } else { theme::BORDER },
+                if hovered {
+                    theme::BORDER_ACTIVE
+                } else {
+                    theme::BORDER
+                },
                 if !enabled {
                     tint(theme::TEXT_MUTED, 0.6)
                 } else if hovered {
@@ -212,7 +263,50 @@ fn orb_button_impl(
     };
 
     painter.circle_filled(center, radius, fill);
-    painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, border));
+    painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, rim));
+
+    match kind {
+        OrbKind::Primary => {
+            // Eight machined dashes around the glyph...
+            tick_ring(
+                painter,
+                center,
+                radius - 5.0,
+                tint(theme::ACCENT_LIGHT, if hovered { 0.85 } else { 0.5 }),
+                1.0,
+                8,
+                0.28,
+                0.0,
+            );
+            // ...and a radar sweep running along the rim, so the primary action
+            // reads as "powered" while the list beside it stays calm.
+            let sweep: Vec<Pos2> = (0..=6)
+                .map(|k| {
+                    let a = time * 1.2 + 0.9 * (k as f32 / 6.0);
+                    center + Vec2::new(a.cos(), a.sin()) * (radius - 1.5)
+                })
+                .collect();
+            painter.add(egui::Shape::line(
+                sweep,
+                Stroke::new(
+                    1.5,
+                    tint(theme::ACCENT_LIGHT, if hovered { 0.95 } else { 0.6 }),
+                ),
+            ));
+        }
+        // Four diagonal brackets, the HUD "target" marks.
+        OrbKind::Ghost => tick_ring(
+            painter,
+            center,
+            radius - 3.0,
+            tint(theme::ACCENT, if hovered { 0.9 } else { 0.28 }),
+            1.0,
+            4,
+            0.42,
+            phase,
+        ),
+    }
+
     draw(painter, rect, glyph);
     response
 }
