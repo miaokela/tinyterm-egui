@@ -11,8 +11,7 @@ use crate::widgets;
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 const ROW_HEIGHT: f32 = 22.0;
-/// Wide enough for the two transfer buttons, which sit side by side.
-const DIVIDER_WIDTH: f32 = 52.0;
+const DIVIDER_WIDTH: f32 = 32.0;
 const PANEL_HEADER_HEIGHT: f32 = 26.0;
 const PATH_BAR_HEIGHT: f32 = 24.0;
 const QUEUE_ROW_HEIGHT: f32 = 28.0;
@@ -635,44 +634,41 @@ fn divider(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rect) {
     let local_path = fm.local.path.clone();
     let deleting = false;
 
-    // Both buttons share one row, and each arrow points at the panel it feeds:
-    // ← pulls the remote selection into the local panel, → pushes the local
-    // selection to the remote panel.
     let btn_size = 20.0;
-    let gap = 6.0;
-    let center = rect.center();
-    let download_rect = Rect::from_center_size(
-        Pos2::new(center.x - btn_size * 0.5 - gap * 0.5, center.y),
-        Vec2::splat(btn_size),
-    );
+    let gap = 8.0;
+    let center_y = rect.center().y;
     let upload_rect = Rect::from_center_size(
-        Pos2::new(center.x + btn_size * 0.5 + gap * 0.5, center.y),
+        Pos2::new(rect.center().x, center_y - btn_size * 0.5 - gap * 0.5),
+        Vec2::splat(btn_size),
+    );
+    let download_rect = Rect::from_center_size(
+        Pos2::new(rect.center().x, center_y + btn_size * 0.5 + gap * 0.5),
         Vec2::splat(btn_size),
     );
 
-    // Divider line above / below the button row
+    // Vertical lines above / below the button pair
     painter.line_segment(
         [
-            Pos2::new(center.x, rect.top() + 6.0),
-            Pos2::new(center.x, upload_rect.top() - 4.0),
+            Pos2::new(rect.center().x, rect.top() + 6.0),
+            Pos2::new(rect.center().x, upload_rect.top() - 4.0),
         ],
         Stroke::new(1.0, theme::BORDER),
     );
     painter.line_segment(
         [
-            Pos2::new(center.x, upload_rect.bottom() + 4.0),
-            Pos2::new(center.x, rect.bottom() - 6.0),
+            Pos2::new(rect.center().x, download_rect.bottom() + 4.0),
+            Pos2::new(rect.center().x, rect.bottom() - 6.0),
         ],
         Stroke::new(1.0, theme::BORDER),
     );
 
-    // Upload: local → remote, so the badge sits on the outer (right) edge.
+    // Upload: local → remote.
     let up = ui.interact(upload_rect, ui.id().with(("fm-up", session_id)), Sense::click());
     let up_enabled = !upload_busy && !deleting;
     let up_active = !local_sel.is_empty();
     draw_transfer_btn(ui, upload_rect, up.hovered() && up_enabled, up_active, true, upload_busy);
     if up_active {
-        draw_badge(&painter, upload_rect, local_sel.len(), true);
+        draw_badge(&painter, upload_rect, local_sel.len(), false);
     }
     if up.clicked() && up_enabled {
         if local_sel.is_empty() {
@@ -682,7 +678,7 @@ fn divider(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rect) {
         }
     }
 
-    // Download: remote → local, so the badge sits on the outer (left) edge.
+    // Download: remote → local.
     let down = ui.interact(
         download_rect,
         ui.id().with(("fm-down", session_id)),
@@ -692,7 +688,7 @@ fn divider(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rect) {
     let down_active = !remote_sel.is_empty();
     draw_transfer_btn(ui, download_rect, down.hovered() && down_enabled, down_active, false, download_busy);
     if down_active {
-        draw_badge(&painter, download_rect, remote_sel.len(), false);
+        draw_badge(&painter, download_rect, remote_sel.len(), true);
     }
     if down.clicked() && down_enabled {
         if remote_sel.is_empty() {
