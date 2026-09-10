@@ -147,7 +147,9 @@ All controls allocate their own rect and paint themselves; they return
 | `primary_button(ui, label, enabled)` | 30 px tall, width = text + 40, accent fill, glow on hover, 3 disabled states |
 | `ghost_button(ui, label, enabled)` | transparent fill + border, used for every dialog action (「取消」等) |
 | `button_row(ui, rect, &[(label, enabled)]) -> Option<usize>` | right-aligned dialog action row; returns the clicked index |
-| `orb_button(...)` | circular icon button (collapse toggles, window-ish controls) |
+| `orb_button(ui, size, draw)` | ghost circular icon button: nearly invisible at rest, accent tint + border + glow on hover (host-row 连接, collapse toggles) |
+| `primary_orb_button(ui, size, draw)` | accent-filled orb for a panel's primary action (新增主机 / 新增凭据) — use this instead of filling a circle by hand |
+| `tint(color, alpha)` | premultiplied translucent variant of a theme colour; use it rather than `from_rgba_unmultiplied`, which reads muddy through the painter |
 | `text_input(ui, value, placeholder, width, password)` | 30 px tall, `BG_INPUT` fill, accent border when focused |
 | `text_input_ext(..., leading_icon)` | same, with the text inset 30 px so a magnifier never overlaps the placeholder |
 | `text_area(ui, value, placeholder, width, height)` | multi-line (private keys) |

@@ -101,47 +101,119 @@ pub fn ghost_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     response
 }
 
-/// Frosted "orb" button used by Hosts/Credentials toolbars.
+/// Translucent version of a theme colour.
+///
+/// egui's painter wants *premultiplied* channels, so scaling the colour and the
+/// alpha together is what keeps a tint from looking washed out or muddy.
+pub fn tint(color: Color32, alpha: f32) -> Color32 {
+    let a = alpha.clamp(0.0, 1.0);
+    Color32::from_rgba_premultiplied(
+        (color.r() as f32 * a) as u8,
+        (color.g() as f32 * a) as u8,
+        (color.b() as f32 * a) as u8,
+        (a * 255.0) as u8,
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OrbKind {
+    /// Row action: invisible until hovered.
+    Ghost,
+    /// Panel primary action: filled accent, always visible.
+    Primary,
+}
+
+/// Frosted circular icon button used by the Hosts/Credentials toolbars and host
+/// rows.
+///
+/// Idle it stays nearly transparent so a list of rows does not turn into a wall
+/// of buttons; on hover it takes an accent tint, an accent border, a soft glow
+/// and a brighter glyph, which is enough to read as "this row can connect".
 pub fn orb_button(
     ui: &mut Ui,
     size: f32,
+    draw: impl FnOnce(&egui::Painter, Rect, Color32),
+) -> Response {
+    orb_button_impl(ui, size, OrbKind::Ghost, draw)
+}
+
+/// Accent-filled orb for a panel's primary action (e.g. 新增主机).
+pub fn primary_orb_button(
+    ui: &mut Ui,
+    size: f32,
+    draw: impl FnOnce(&egui::Painter, Rect, Color32),
+) -> Response {
+    orb_button_impl(ui, size, OrbKind::Primary, draw)
+}
+
+fn orb_button_impl(
+    ui: &mut Ui,
+    size: f32,
+    kind: OrbKind,
     draw: impl FnOnce(&egui::Painter, Rect, Color32),
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
     if !ui.is_rect_visible(rect) {
         return response;
     }
-    let hovered = response.hovered();
+    let enabled = ui.is_enabled();
+    let hovered = enabled && response.hovered();
+    let pressed = enabled && response.is_pointer_button_down_on();
     let painter = ui.painter();
     let center = rect.center();
     let radius = size * 0.5;
-    painter.circle_filled(
-        center,
-        radius,
-        if hovered {
-            Color32::from_rgba_premultiplied(62, 118, 200, 128)
-        } else {
-            Color32::from_rgba_premultiplied(45, 100, 200, 90)
-        },
-    );
-    painter.circle_filled(
-        center + Vec2::new(-radius * 0.24, -radius * 0.28),
-        radius * 0.42,
-        Color32::from_rgba_premultiplied(70, 70, 70, 60),
-    );
-    painter.circle_stroke(
-        center,
-        radius - 0.5,
-        Stroke::new(
-            1.0,
-            if hovered {
-                Color32::from_rgba_premultiplied(105, 148, 191, 204)
+    let glow_radius = radius.round().clamp(0.0, 255.0) as u8;
+
+    let (fill, border, glyph) = match kind {
+        OrbKind::Primary => {
+            let fill = if !enabled {
+                tint(theme::ACCENT, 0.35)
+            } else if pressed {
+                theme::ACCENT_ACTIVE
+            } else if hovered {
+                theme::ACCENT_HOVER
             } else {
-                Color32::from_rgba_premultiplied(77, 133, 191, 148)
-            },
-        ),
-    );
-    draw(painter, rect, Color32::from_rgba_premultiplied(242, 246, 255, 250));
+                theme::ACCENT
+            };
+            if hovered {
+                theme::glow(painter, rect, glow_radius, theme::ACCENT_HOVER, 1.0);
+            }
+            (
+                fill,
+                tint(theme::ACCENT_LIGHT, if hovered { 0.9 } else { 0.55 }),
+                if enabled { Color32::WHITE } else { tint(Color32::WHITE, 0.6) },
+            )
+        }
+        OrbKind::Ghost => {
+            let fill = if !enabled {
+                tint(theme::BG_CARD, 0.25)
+            } else if pressed {
+                tint(theme::ACCENT, 0.34)
+            } else if hovered {
+                tint(theme::ACCENT, 0.22)
+            } else {
+                tint(theme::TEXT_PRIMARY, 0.04)
+            };
+            if hovered {
+                theme::glow(painter, rect, glow_radius, theme::ACCENT, 0.55);
+            }
+            (
+                fill,
+                if hovered { theme::BORDER_ACTIVE } else { theme::BORDER },
+                if !enabled {
+                    tint(theme::TEXT_MUTED, 0.6)
+                } else if hovered {
+                    theme::TEXT_PRIMARY
+                } else {
+                    theme::TEXT_SECONDARY
+                },
+            )
+        }
+    };
+
+    painter.circle_filled(center, radius, fill);
+    painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, border));
+    draw(painter, rect, glyph);
     response
 }
 
