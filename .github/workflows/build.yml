@@ -168,17 +168,24 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      # `gh` is preinstalled on the runner; re-tagging an existing version
-      # uploads over the old assets instead of failing.
+      # `gh` is preinstalled on the runner. This job never checks the repository
+      # out (it only needs the downloaded artifacts), so every command has to be
+      # told which repository to act on - without `--repo`, gh tries to read the
+      # git remote and dies with "not a git repository".
+      #
+      # Re-tagging an existing version uploads over the old assets instead of
+      # failing on "release already exists".
       - name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          if gh release view "$GITHUB_REF_NAME" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --repo "$REPO" --clobber
           else
             gh release create "$GITHUB_REF_NAME" dist/* \
+              --repo "$REPO" \
               --title "TinyTerm $GITHUB_REF_NAME" \
               --generate-notes
           fi
