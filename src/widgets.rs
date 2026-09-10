@@ -267,19 +267,9 @@ fn orb_button_impl(
 
     match kind {
         OrbKind::Primary => {
-            // Eight machined dashes around the glyph...
-            tick_ring(
-                painter,
-                center,
-                radius - 5.0,
-                tint(theme::ACCENT_LIGHT, if hovered { 0.85 } else { 0.5 }),
-                1.0,
-                8,
-                0.28,
-                0.0,
-            );
-            // ...and a radar sweep running along the rim, so the primary action
-            // reads as "powered" while the list beside it stays calm.
+            // A radar sweep running along the rim, so the primary action reads
+            // as "powered" while the list beside it stays calm. No dashes here:
+            // the plus glyph needs the centre of the disc to itself.
             let sweep: Vec<Pos2> = (0..=6)
                 .map(|k| {
                     let a = time * 1.2 + 0.9 * (k as f32 / 6.0);
