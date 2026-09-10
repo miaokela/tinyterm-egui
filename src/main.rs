@@ -189,14 +189,26 @@ fn zoom_path() -> std::path::PathBuf {
 }
 
 fn read_zoom() -> f32 {
-    std::fs::read_to_string(zoom_path())
+    let stored = std::fs::read_to_string(zoom_path())
         .ok()
-        .and_then(|s| s.trim().parse::<f32>().ok())
-        .map(|z| z.clamp(state::APP_ZOOM_MIN, state::APP_ZOOM_MAX))
-        .unwrap_or(state::APP_ZOOM_MIN)
+        .and_then(|s| s.trim().parse::<f32>().ok());
+    match stored {
+        // 0.8 used to be the default and every run wrote it back, so a stored
+        // 0.8 means the user never chose it - fall through to the new default.
+        Some(z) if (z - state::APP_ZOOM_LEGACY_DEFAULT).abs() > 0.001 => {
+            z.clamp(state::APP_ZOOM_MIN, state::APP_ZOOM_MAX)
+        }
+        _ => state::APP_ZOOM_DEFAULT,
+    }
 }
 
 fn write_zoom(zoom: f32) {
-    let _ = std::fs::write(zoom_path(), format!("{zoom}"));
+    // The default is not persisted: leaving the file absent lets a future change
+    // of default actually take effect instead of being pinned by a stale value.
+    if (zoom - state::APP_ZOOM_DEFAULT).abs() < 0.001 {
+        let _ = std::fs::remove_file(zoom_path());
+    } else {
+        let _ = std::fs::write(zoom_path(), format!("{zoom}"));
+    }
     let _ = APP_ZOOM_STORAGE_KEY;
 }

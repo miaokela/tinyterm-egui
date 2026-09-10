@@ -16,8 +16,12 @@ The whole app is drawn from the root `Ui` of `eframe::App::ui`; there are **no
 `SidePanel`/`CentralPanel`** — every region is an explicit `Rect`. That keeps the
 glass panels, the gaps between them, and the z-order fully under control.
 
-Default zoom is `APP_ZOOM_MIN = 0.8` (range 0.8–1.4, step 0.1), applied with
-`ctx.set_zoom_factor` and persisted next to the database (`zoom.txt`).
+Default zoom is `APP_ZOOM_DEFAULT = 1.0` (range 0.8–1.6, step 0.1), applied with
+`ctx.set_zoom_factor` and persisted in `zoom.txt` next to the database. Only a
+*non-default* value is written to disk — keeping the default absent means a future
+change of default actually takes effect instead of being pinned by a stale file.
+`APP_ZOOM_LEGACY_DEFAULT = 0.8` is treated as "never customised" for the same
+reason (`Cmd/Ctrl + 0` resets to the default).
 
 ## 2. Region tree
 

@@ -9,8 +9,14 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 pub const APP_ZOOM_MIN: f32 = 0.8;
-pub const APP_ZOOM_MAX: f32 = 1.4;
+pub const APP_ZOOM_MAX: f32 = 1.6;
 pub const APP_ZOOM_STEP: f32 = 0.1;
+/// Zoom used when the user never changed it. The web client ran at 0.8 because
+/// its CSS was designed for that; on the desktop 1.0 is the comfortable size.
+pub const APP_ZOOM_DEFAULT: f32 = 1.0;
+/// The previous default. Every run used to persist the current zoom, so a stored
+/// 0.8 means "never customised" rather than a deliberate choice.
+pub const APP_ZOOM_LEGACY_DEFAULT: f32 = 0.8;
 pub const ADD_SESSION_MIN_LOADING_MS: f64 = 600.0;
 pub const CONNECTION_CHECK_INTERVAL_MS: f64 = 15_000.0;
 pub const FM_CONTENT_HEIGHT: f32 = 260.0;

@@ -198,6 +198,7 @@ ui.put(inner, egui::TextEdit::singleline(value).frame(egui::Frame::NONE));
 
 | Symptom | Cause / fix |
 |---|---|
+| A diagonal line across a panel's rounded corner (and across its open side) | `stroke_open`'s corner arc was traversed backwards, so the polyline jumped between the arc's start and the previous point. Arcs must run `from → to` in the direction that continues the outline. |
 | Buttons stack vertically in a dialog footer | A `Ui` created with `ui.new_child(UiBuilder::new().max_rect(r))` **inherits the parent's top-down layout**; pass `.layout(Layout::right_to_left(Align::Center))`. |
 | Two rows share hover/click state | Duplicate widget ids. Give repeated controls `ui.push_id(index, |ui| …)` or fold the session id into the id. |
 | Text looks vertically high in labels | Font `lineGap`; see §3 (`FontTweak.y_offset_factor`). |

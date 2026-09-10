@@ -529,7 +529,7 @@ impl TinyTermApp {
                 (self.state.app_zoom - crate::state::APP_ZOOM_STEP).max(crate::state::APP_ZOOM_MIN);
         }
         if zoom_reset {
-            self.state.app_zoom = crate::state::APP_ZOOM_MIN;
+            self.state.app_zoom = crate::state::APP_ZOOM_DEFAULT;
         }
 
         // Cmd+, opens settings.

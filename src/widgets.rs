@@ -459,6 +459,12 @@ pub enum OpenSide {
 }
 
 /// Stroke a rounded rectangle while omitting one horizontal edge.
+///
+/// The polyline must be continuous: `Shape::line` joins every consecutive pair,
+/// so a corner arc that starts where the previous point already is. The arcs
+/// below are therefore traversed in the direction that continues the outline
+/// (`from` → `to`); running one backwards draws a diagonal chord across the
+/// corner instead of the arc.
 pub fn stroke_open(
     painter: &egui::Painter,
     rect: Rect,
@@ -466,12 +472,14 @@ pub fn stroke_open(
     stroke: Stroke,
     open: OpenSide,
 ) {
+    use std::f32::consts::{FRAC_PI_2, PI, TAU};
+
     const STEPS: usize = 8;
     let r = radius as f32;
-    let arc = |cx: f32, cy: f32, start: f32| -> Vec<Pos2> {
+    let arc = |cx: f32, cy: f32, from: f32, to: f32| -> Vec<Pos2> {
         (0..=STEPS)
             .map(|i| {
-                let a = start + (i as f32 / STEPS as f32) * std::f32::consts::FRAC_PI_2;
+                let a = from + (to - from) * (i as f32 / STEPS as f32);
                 Pos2::new(cx + a.cos() * r, cy + a.sin() * r)
             })
             .collect()
@@ -479,28 +487,23 @@ pub fn stroke_open(
 
     let mut points: Vec<Pos2> = Vec::with_capacity(4 * STEPS + 8);
     match open {
-        OpenSide::Bottom => {
-            points.push(Pos2::new(rect.left(), rect.bottom()));
-            points.extend(arc(rect.left() + r, rect.top() + r, std::f32::consts::PI));
-            points.push(Pos2::new(rect.right() - r, rect.top()));
-            points.extend(arc(
-                rect.right() - r,
-                rect.top() + r,
-                -std::f32::consts::FRAC_PI_2,
-            ));
-            points.push(Pos2::new(rect.right(), rect.bottom()));
-        }
+        // Left, bottom and right edges — the top edge stays open.
         OpenSide::Top => {
             points.push(Pos2::new(rect.left(), rect.top()));
             points.push(Pos2::new(rect.left(), rect.bottom() - r));
-            points.extend(arc(
-                rect.left() + r,
-                rect.bottom() - r,
-                std::f32::consts::FRAC_PI_2,
-            ));
+            points.extend(arc(rect.left() + r, rect.bottom() - r, PI, FRAC_PI_2));
             points.push(Pos2::new(rect.right() - r, rect.bottom()));
-            points.extend(arc(rect.right() - r, rect.bottom() - r, 0.0));
+            points.extend(arc(rect.right() - r, rect.bottom() - r, FRAC_PI_2, 0.0));
             points.push(Pos2::new(rect.right(), rect.top()));
+        }
+        // Left, top and right edges — the bottom edge stays open.
+        OpenSide::Bottom => {
+            points.push(Pos2::new(rect.left(), rect.bottom()));
+            points.push(Pos2::new(rect.left(), rect.top() + r));
+            points.extend(arc(rect.left() + r, rect.top() + r, PI, 3.0 * FRAC_PI_2));
+            points.push(Pos2::new(rect.right() - r, rect.top()));
+            points.extend(arc(rect.right() - r, rect.top() + r, 3.0 * FRAC_PI_2, TAU));
+            points.push(Pos2::new(rect.right(), rect.bottom()));
         }
     }
     painter.add(egui::Shape::line(points, stroke));
