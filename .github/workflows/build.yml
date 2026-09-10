@@ -62,7 +62,7 @@ jobs:
             <key>CFBundleIdentifier</key><string>com.tinyterm.egui</string>
             <key>CFBundleIconFile</key><string>AppIcon</string>
             <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>0.1.0</string>
+            <key>CFBundleShortVersionString</key><string>__VERSION__</string>
             <key>CFBundleVersion</key><string>1</string>
             <key>LSMinimumSystemVersion</key><string>11.0</string>
             <key>NSHighResolutionCapable</key><true/>
@@ -71,7 +71,7 @@ jobs:
           PLIST
           # Version from Cargo.toml instead of a second hard-coded copy.
           VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-          sed -i '' -e "s|<string>0.1.0</string>|<string>$VERSION</string>|g" "$APP/Contents/Info.plist"
+          sed -i '' -e "s|__VERSION__|$VERSION|g" "$APP/Contents/Info.plist"
           # Drag-to-install layout: artwork + the app next to an /Applications
           # alias. make-dmg.sh drives Finder to write the .DS_Store that carries
           # the background picture and the icon positions.

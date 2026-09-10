@@ -4,8 +4,8 @@
 ; needed - this mirrors the original Tauri build's default install mode.
 ;
 ; Built from .github/workflows/build.yml:
-;   makensis /DAPP_VERSION=0.1.0 /DAPP_EXE=...\tinyterm-egui.exe ^
-;            /DOUT_FILE=...\TinyTerm-0.1.0-setup.exe /DICON_FILE=...\icon.ico ^
+;   makensis /DAPP_VERSION=0.1.1 /DAPP_EXE=...\tinyterm-egui.exe ^
+;            /DOUT_FILE=...\TinyTerm-0.1.1-setup.exe /DICON_FILE=...\icon.ico ^
 ;            scripts\windows-installer.nsi
 ;
 ; The script itself is pure ASCII on purpose: every visible string comes from
@@ -19,7 +19,7 @@ Unicode true
 !include "LogicLib.nsh"
 
 !ifndef APP_VERSION
-  !define APP_VERSION "0.1.0"
+  !define APP_VERSION "0.1.1"
 !endif
 !ifndef APP_EXE
   !define APP_EXE "target\release\tinyterm-egui.exe"

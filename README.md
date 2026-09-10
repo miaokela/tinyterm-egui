@@ -173,9 +173,9 @@ Finder，脚本会照常产出 DMG，只是没有背景图和图标位置（会�
 
 ```powershell
 cargo build --release
-makensis /DAPP_VERSION=0.1.0 `
+makensis /DAPP_VERSION=0.1.1 `
   /DAPP_EXE="$PWD\target\release\tinyterm-egui.exe" `
-  /DOUT_FILE="$PWD\TinyTerm-0.1.0-setup.exe" `
+  /DOUT_FILE="$PWD\TinyTerm-0.1.1-setup.exe" `
   /DICON_FILE="$PWD\assets\icon.ico" `
   scripts\windows-installer.nsi
 ```

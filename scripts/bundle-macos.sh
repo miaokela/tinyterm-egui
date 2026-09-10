@@ -21,6 +21,9 @@ mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp "$ROOT/target/release/tinyterm-egui" "$BUNDLE/Contents/MacOS/$APP_NAME"
 cp "$ROOT/assets/icon.icns" "$BUNDLE/Contents/Resources/AppIcon.icns"
 
+# Keep the bundle version in step with the crate (the CI job does the same).
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
+
 cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -32,7 +35,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>com.tinyterm.egui</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
