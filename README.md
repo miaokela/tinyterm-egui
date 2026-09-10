@@ -123,8 +123,8 @@ macOS 说明：winit 在 macOS 上**不支持** `set_window_icon`，Dock/Finder 
 
 ## 打包与分发
 
-GitHub Actions 在推送 `v*` tag 时构建两个产物（**不创建 Release**，产物在 Actions
-页面的 Artifacts 里下载）：
+GitHub Actions 在推送 `v*` tag 时构建两个产物，并**同时发布到 GitHub Release**，
+从 `Releases` 页面直接下载（Actions 的 Artifacts 里也各留一份）：
 
 | 平台 | 产物 | 说明 |
 |---|---|---|
