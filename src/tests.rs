@@ -238,6 +238,49 @@ fn settings_normalization_migrates_legacy_defaults() {
 }
 
 #[test]
+fn cursor_style_parsing() {
+    assert_eq!(term::CursorStyle::from_setting("block"), term::CursorStyle::Block);
+    assert_eq!(term::CursorStyle::from_setting("bar"), term::CursorStyle::Bar);
+    assert_eq!(term::CursorStyle::from_setting("beam"), term::CursorStyle::Bar);
+    assert_eq!(
+        term::CursorStyle::from_setting("underline"),
+        term::CursorStyle::Underline
+    );
+    // Unknown values fall back to the default rather than drawing nothing.
+    assert_eq!(
+        term::CursorStyle::from_setting("nonsense"),
+        term::CursorStyle::Underline
+    );
+    assert_eq!(term::CursorStyle::default(), term::CursorStyle::Underline);
+}
+
+#[test]
+fn cursor_style_defaults_to_underline_and_migrates_legacy_block() {
+    let (db, dir) = temp_db("cursor-style");
+    // Fresh installs start on the underline cursor.
+    assert_eq!(db.get_settings().unwrap().cursor_style, "underline");
+
+    // Simulate a database written before the renderer honoured the setting.
+    {
+        let conn = rusqlite::Connection::open(&db.path).unwrap();
+        conn.execute("UPDATE settings SET cursor_style='block'", [])
+            .unwrap();
+        conn.execute_batch("PRAGMA user_version=0").unwrap();
+    }
+    let reopened = Db::open(&db.path).unwrap();
+    assert_eq!(reopened.get_settings().unwrap().cursor_style, "underline");
+
+    // A choice made after the migration is not reverted on the next start.
+    let mut s = reopened.get_settings().unwrap();
+    s.cursor_style = "block".into();
+    reopened.save_settings(&s).unwrap();
+    let reopened = Db::open(&db.path).unwrap();
+    assert_eq!(reopened.get_settings().unwrap().cursor_style, "block");
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
 fn transfer_progress_percent() {
     let mut t = TransferProgress {
         id: "x".into(),

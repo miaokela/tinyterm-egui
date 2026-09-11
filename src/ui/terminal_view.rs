@@ -109,6 +109,7 @@ fn render_connected(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rec
 
     // ── Painting ─────────────────────────────────────────────────────────────
     let blink = app.settings.cursor_blink;
+    let cursor_style = term::CursorStyle::from_setting(&app.settings.cursor_style);
     let t_secs = ui.input(|i| i.time);
     let cursor_on = !blink || (t_secs * 1.6).fract() < 0.6;
     let selection = app.terminal_ui_mut(session_id).selection;
@@ -120,6 +121,7 @@ fn render_connected(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rec
             &t,
             font_size,
             metrics,
+            cursor_style,
             cursor_on,
             selection,
         );
@@ -148,6 +150,26 @@ fn render_connected(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rec
     {
         ctx.memory_mut(|m| m.request_focus(response.id));
         has_focus = true;
+    }
+
+    // While the terminal owns the keyboard it must keep every keystroke.
+    // egui's focus navigation otherwise treats Tab / arrow keys / Escape as
+    // "move focus to the next widget": focus jumps out of the terminal into
+    // the surrounding UI and typing stops reaching the shell. The lock filter
+    // keeps those keys inside the terminal (they are still delivered as normal
+    // events, so `encode_key` sends \t, \x1b[A, \x1b, … to the session).
+    if has_focus {
+        ctx.memory_mut(|m| {
+            m.set_focus_lock_filter(
+                response.id,
+                egui::EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: true,
+                },
+            );
+        });
     }
 
     // ── Mouse reporting (TUI apps such as htop / vim) ────────────────────────

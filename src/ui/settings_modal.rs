@@ -137,9 +137,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
             );
 
             widgets::labelled(ui, "光标样式", false);
-            let styles = ["block", "bar", "underline"];
+            let styles = [("block", "方块"), ("bar", "竖线"), ("underline", "下划线")];
             let mut row_ui = ui.horizontal(|ui| {
-                for style in styles {
+                for (style, label) in styles {
                     let selected = app.settings.cursor_style == style;
                     let (r, resp) = ui.allocate_exact_size(Vec2::new(90.0, 28.0), Sense::click());
                     let p = ui.painter();
@@ -163,7 +163,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                     p.text(
                         r.center(),
                         Align2::CENTER_CENTER,
-                        style,
+                        label,
                         theme::f_xs(),
                         if selected { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY },
                     );

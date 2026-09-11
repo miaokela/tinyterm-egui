@@ -153,7 +153,7 @@ impl Default for Settings {
             scrollback: 5000,
             show_hidden_files: false,
             default_protocol: "ssh".into(),
-            cursor_style: "block".into(),
+            cursor_style: "underline".into(),
             cursor_blink: true,
             bell_style: "none".into(),
         }

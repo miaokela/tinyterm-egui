@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS settings (
     scrollback INTEGER NOT NULL DEFAULT 5000,
     show_hidden_files INTEGER NOT NULL DEFAULT 0,
     default_protocol TEXT NOT NULL DEFAULT 'ssh',
-    cursor_style TEXT NOT NULL DEFAULT 'block',
+    cursor_style TEXT NOT NULL DEFAULT 'underline',
     cursor_blink INTEGER NOT NULL DEFAULT 1,
     bell_style TEXT NOT NULL DEFAULT 'none'
 );
@@ -76,6 +76,28 @@ CREATE TABLE IF NOT EXISTS trusted_host_keys (
 );
 INSERT OR IGNORE INTO settings (id) VALUES (1);
 "#;
+
+/// Current schema/data version, tracked with `PRAGMA user_version`.
+///
+/// v1 — `cursor_style` used to be ignored by the renderer (every terminal drew
+/// a block cursor), so a stored `'block'` was the untouched default rather than
+/// a user choice. Move those rows to the new default (`'underline'`) once.
+const SCHEMA_VERSION: i64 = 1;
+
+/// Apply one-time migrations. Idempotent: running it again is a no-op.
+fn migrate(conn: &Connection) -> Result<()> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version < 1 {
+        conn.execute(
+            "UPDATE settings SET cursor_style='underline' WHERE cursor_style='block'",
+            [],
+        )?;
+    }
+    if version < SCHEMA_VERSION {
+        conn.execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION}"))?;
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 pub struct Db {
@@ -94,6 +116,7 @@ impl Db {
             let conn = db.conn()?;
             conn.execute_batch(SCHEMA)
                 .context("failed to initialize database")?;
+            migrate(&conn).context("failed to migrate database")?;
         }
         db.normalize_stored_secrets()
             .context("failed to normalize stored secrets")?;

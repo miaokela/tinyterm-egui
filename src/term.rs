@@ -9,6 +9,30 @@ use egui::{Align2, Color32, CornerRadius, FontId, Pos2, Rect, Stroke, Vec2};
 use std::sync::Arc;
 use vt100::{Color as VtColor, Parser, Screen};
 
+/// Terminal cursor shape, driven by `Settings::cursor_style`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorStyle {
+    /// Filled cell with the glyph re-drawn in the background colour.
+    Block,
+    /// Thin vertical bar on the left edge of the cell.
+    Bar,
+    /// Short line along the bottom of the cell (the default).
+    #[default]
+    Underline,
+}
+
+impl CursorStyle {
+    /// Map the persisted `cursor_style` value to a shape. Unknown values fall
+    /// back to the default underline rather than rendering nothing.
+    pub fn from_setting(value: &str) -> Self {
+        match value {
+            "block" => Self::Block,
+            "bar" | "beam" => Self::Bar,
+            _ => Self::Underline,
+        }
+    }
+}
+
 /// Cell metrics for the current font size, cached per (font_size, family).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CellMetrics {
@@ -206,6 +230,7 @@ pub fn paint(
     term: &Terminal,
     font_size: f32,
     metrics: CellMetrics,
+    cursor_style: CursorStyle,
     cursor_blink_on: bool,
     selection: Selection,
 ) -> PaintResult {
@@ -346,22 +371,48 @@ pub fn paint(
         // ── Cursor ───────────────────────────────────────────────────────────
         if show_cursor && cursor.0 == row && cursor_blink_on {
             let x = rect.left() + cursor.1 as f32 * metrics.width;
-            let cursor_rect = Rect::from_min_size(
+            let cell_rect = Rect::from_min_size(
                 Pos2::new(x, y),
                 Vec2::new(metrics.width, metrics.height),
             );
-            painter.rect_filled(cursor_rect, 0, theme::TERM_CURSOR);
-            // Re-draw the glyph under the cursor in the terminal background
-            // colour so a block cursor does not hide the character.
-            if let Some(cell) = screen.cell(cursor.0, cursor.1) {
-                let contents = cell.contents();
-                if !contents.is_empty() {
-                    painter.text(
-                        cursor_rect.center(),
-                        Align2::CENTER_CENTER,
-                        contents,
-                        font.clone(),
-                        theme::TERMINAL_BG,
+            match cursor_style {
+                CursorStyle::Block => {
+                    painter.rect_filled(cell_rect, 0, theme::TERM_CURSOR);
+                    // Re-draw the glyph under the cursor in the terminal
+                    // background colour so a block cursor does not hide the
+                    // character.
+                    if let Some(cell) = screen.cell(cursor.0, cursor.1) {
+                        let contents = cell.contents();
+                        if !contents.is_empty() {
+                            painter.text(
+                                cell_rect.center(),
+                                Align2::CENTER_CENTER,
+                                contents,
+                                font.clone(),
+                                theme::TERMINAL_BG,
+                            );
+                        }
+                    }
+                }
+                CursorStyle::Bar => {
+                    let width = (metrics.width * 0.16).clamp(1.0, 3.0);
+                    painter.rect_filled(
+                        Rect::from_min_size(cell_rect.min, Vec2::new(width, metrics.height)),
+                        0,
+                        theme::TERM_CURSOR,
+                    );
+                }
+                CursorStyle::Underline => {
+                    // A short bar under the character: it marks the insertion
+                    // point without covering the glyph itself.
+                    let height = (metrics.height * 0.12).clamp(1.5, 3.0);
+                    painter.rect_filled(
+                        Rect::from_min_max(
+                            Pos2::new(cell_rect.left(), cell_rect.bottom() - height),
+                            cell_rect.max,
+                        ),
+                        0,
+                        theme::TERM_CURSOR,
                     );
                 }
             }
