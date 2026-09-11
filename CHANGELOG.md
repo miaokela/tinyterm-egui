@@ -3,7 +3,7 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)；版本号取自 `Cargo.toml`，
 推送 `v*` tag 会触发 GitHub Actions 构建 macOS `.dmg` 与 Windows 安装包（不创建 Release）。
 
-## [未发布]
+## [0.1.2] - 2026-09-11
 
 ### 修复
 
