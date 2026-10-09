@@ -1,201 +1,256 @@
-# TinyTerm (egui)
+<div align="center">
 
-TinyTerm 的 **egui / eframe** 重写版本 —— 一个纯 Rust 的桌面 SSH 客户端，视觉与交互对齐原版
-Tauri + React 实现（cosmic / glassmorphism 主题）。
+<img src="assets/icon.png" width="112" alt="TinyTerm">
 
-![TinyTerm 主界面：左侧主机列表，中间终端，右侧本地/远端文件管理](assets/screenshot.png)
+# TinyTerm
 
-```
-tinyterm-egui/
-├── Cargo.toml
-├── README.md
-├── docs/
-│   ├── ANALYSIS.md             # 原版全量功能与 UI 细节分析（需求基线）
-│   ├── spec-backend.md         # Rust 后端逐命令规格（SQL/SSH/SFTP/加密）
-│   └── spec-filemanager.md     # 文件管理器逐交互规格
-└── src/
-    ├── main.rs                 # 入口：存储、tokio runtime、eframe
-    ├── app.rs                  # eframe::App：布局、事件泵、弹窗路由
-    ├── state.rs                # 应用状态（Host/Session 标签、文件管理器、弹窗、Toast）
-    ├── actions.rs              # 状态迁移（等价于原版 Zustand store actions）
-    ├── models.rs               # 数据模型
-    ├── storage.rs              # SQLite（与原版同 schema）
-    ├── crypto.rs               # ttenc:v1 密钥信封（RSA-OAEP + AES-256-GCM）
-    ├── ssh.rs                  # russh：连接、指纹校验、认证、PTY、exec、SFTP
-    ├── session.rs              # 会话管理 + 事件总线
-    ├── remote_fs.rs            # SFTP 远端文件操作 + tar 目录传输
-    ├── local_fs.rs             # 本地文件操作与删除保护
-    ├── transfer.rs             # 上传/下载编排（批次、tar、降级、冲突）
-    ├── term.rs                 # vt100 终端仿真 + egui 网格渲染 + 按键编码
-    ├── theme.rs                # 设计令牌（颜色/圆角/字号/光晕/星空背景）
-    ├── widgets.rs              # 自绘控件（按钮、输入框、图标、加载动画）
-    └── ui/                     # 各界面模块
-        ├── sidebar.rs          # 左侧主机侧边栏
-        ├── session_tabs.rs     # 顶部会话标签条
-        ├── terminal_view.rs    # 终端面板（输入/选择/滚动/右键/状态覆盖层）
-        ├── file_manager.rs     # 文件管理双栏 + 传输队列 + 右键菜单
-        ├── quick_actions.rs    # 快捷操作栏 + 常用指令 + 历史命令
-        ├── system_info.rs      # CPU / 内存 / 磁盘表格弹窗
-        ├── hosts_modal.rs      # 主机管理弹窗 + 主机表单
-        ├── credentials_modal.rs# 凭据管理弹窗 + 凭据表单
-        ├── settings_modal.rs   # 设置面板（原版缺失，此处补齐）
-        ├── dialogs.rs          # 确认/冲突/登录/粘贴确认
-        └── toast.rs            # 右下角通知
-```
+**A native SSH &amp; SFTP client for macOS and Windows — written in Rust with
+[egui](https://github.com/emilk/egui). One binary, no browser engine, no runtime to install.**
 
-## 构建与运行
+[![build](https://github.com/miaokela/tinyterm-egui/actions/workflows/build.yml/badge.svg)](https://github.com/miaokela/tinyterm-egui/actions/workflows/build.yml)
+[![release](https://img.shields.io/github/v/release/miaokela/tinyterm-egui)](https://github.com/miaokela/tinyterm-egui/releases)
+![rust](https://img.shields.io/badge/rust-1.85%2B-orange)
+![platforms](https://img.shields.io/badge/platform-macOS%2011%2B%20%7C%20Windows%2010%2B-blue)
 
-> 改造本项目前先读 `skills/tinyterm-egui-dev/SKILL.md`：里面沉淀了设计令牌、布局常量、
-> SSH/SFTP 事件契约、打包流水线，以及一路踩过的坑（`-1728`、`crt-static`、wgpu 等）。
+[**English**](README.md)&nbsp;&nbsp;|&nbsp;&nbsp;[简体中文](README.zh-CN.md)
 
-需要 Rust 1.85+（开发使用 nightly 1.100）。
+<img src="assets/screenshot.png" width="900" alt="TinyTerm: host list on the left, terminal on the right, local/remote file manager below">
+
+</div>
+
+TinyTerm is a desktop SSH client that draws its entire interface with GPU
+shapes: the shell, the panels and every button are hand-painted, so the
+frosted-glass look, the gaps between panels and the z-order stay exactly under
+control. Connections, the terminal emulator, transfers and storage all run in
+the same process — there is no sidecar service and no WebView.
+
+It is an egui/eframe reimplementation of the original Tauri + React TinyTerm,
+and it deliberately keeps that app's **on-disk format**: same SQLite schema,
+same encrypted-secret envelope, same data directory. Point it at an existing
+`tinyterm.db` and your hosts, accounts and settings are simply there.
+
+## Highlights
+
+- **Real terminal** — VT100/ANSI emulation with 256 colours, bold/italic/underline/reverse, configurable scrollback, three cursor styles, mouse reporting for TUI apps and bracketed paste.
+- **Tabs that keep their state** — one tab per host, any number of sessions per host; switching tabs never drops scrollback or selection.
+- **Accounts, not just passwords** — reusable password/private-key accounts, encrypted at rest, linked to hosts or prompted per connection.
+- **Built-in file manager** — dual-pane local/remote browsing, upload/download of files and whole directories, a transfer queue with progress and cancel, and conflict handling before anything is overwritten.
+- **Everything follows the keyboard** — zoom, settings, copy/paste, multi-select, and a quick-action bar with CPU/memory/disk snapshots, a command cheatsheet and your shell history.
+- **Honest security posture** — host-key verification with SHA-256 fingerprints (trusted on first use, loud on change), secrets never stored in plain text, no telemetry.
+
+## Features
+
+### Terminal
+
+- VT100/ANSI emulation (`vt100`): 256 colours, the full 16-colour ANSI palette, bold / italic / underline / reverse video
+- Configurable scrollback, three cursor styles (block / bar / underline) with optional blinking
+- Text selection and copy/paste (`Cmd/Ctrl` + `C` / `V`), right-click menu, paste confirmation with a preview and the `N lines · M chars` size
+- Mouse reporting for TUI programs (htop, vim, …); hold `Shift` while dragging to select text instead
+- Bracketed paste (DECSET 2004), so pasting into shells and editors behaves like the real thing
+- Side terminal: a second, independent SSH session next to the current one
+- Quick-action bar: CPU / memory / disk snapshots, a five-category command cheatsheet and your shell history — double-click to insert, one click to run
+- Connection overlay with a reconnecting state and, for authentication failures, an inline password field
+
+### Hosts & accounts
+
+- Host CRUD with colour tag, notes, remote and local starting directories, per-host port and keepalive
+- Reusable accounts: password or private key (with passphrase); link one to a host, or let the login prompt ask at connect time
+- Host manager with search, duplicate and delete (behind a confirmation)
+- Host-key verification: `SHA256:` fingerprints with first-use trust, change detection and a trusted-key list in settings
+- Reachability probing with automatic reconnect — unreachable hosts dim out and come back on their own
+
+### File manager
+
+- Dual-pane (local + remote) file browser, collapsed into the bottom bar of the window
+- Upload / download for single files and whole directories, queued with progress, byte counters and cancel
+- Directory transfers use `tar` on the server when available (one round trip) and fall back to per-file SFTP when it is not
+- Conflict handling before a transfer starts: merge/overwrite decisions, per file or apply-to-all
+- Rename, create folder, delete (with guards), copy path, per-panel hidden-file toggle, editable path bar
+- The remote pane follows the working directory of the active terminal
+
+### Interface
+
+- Cosmic / glassmorphism theme: starfield and drifting grid background, frosted panels, neon accents, one shared corner-radius system
+- Settings panel: terminal font and size, scrollback, cursor style and blinking, default hidden-file visibility, trusted fingerprints, UI zoom
+- Toasts, unified confirmation dialogs, and a login prompt for hosts without an account
+- UI zoom with `Cmd/Ctrl` + `+` / `-` / `0` (0.8× – 1.6×)
+
+## Install
+
+Grab the package for your platform from
+[**Releases**](https://github.com/miaokela/tinyterm-egui/releases):
+
+| Platform | Package | First launch |
+|---|---|---|
+| macOS 11+ (Apple silicon & Intel) | `TinyTerm-macos-universal.dmg` | Unsigned build: **right-click → Open** the first time |
+| Windows 10/11 (x64) | `TinyTerm-windows-x86_64-setup.exe` | SmartScreen: **More info → Run anyway** |
+| Linux, others | build from source | Needs X11 or Wayland |
+
+The macOS package is a universal binary (arm64 + x86_64) built in CI, and every
+release also ships SHA-256 checksums.
+
+## Quick start
+
+1. **Add a host** — click `＋` in the left sidebar and fill in the address and port. An account is optional: without one, TinyTerm asks for the password when you connect.
+2. **Connect** — hit the round connect button on the host row. The first connection asks you to confirm the host's SSH fingerprint.
+3. **Open more sessions** — `＋` in the tab strip adds a session to the same host; the button on the right of the tab strip opens a side terminal.
+4. **Move files** — click the 文件管理 bar at the bottom, select files on either side, then use the `→` / `←` buttons in the middle (or right-click for the context menu).
+5. **Make it yours** — `Cmd/Ctrl` + `,` opens settings: font, cursor, scrollback, hidden files, trusted keys.
+
+> The interface is currently Simplified Chinese — see [Known limitations](#known-limitations).
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Cmd/Ctrl` + `+` / `-` | Zoom in / out (0.8× – 1.6×) |
+| `Cmd/Ctrl` + `0` | Reset zoom to 100 % |
+| `Cmd/Ctrl` + `,` | Open settings |
+| `Cmd/Ctrl` + `C` / `V` | Copy the selection / paste into the terminal |
+| `Cmd/Ctrl` + click | Toggle an item in the file-list selection |
+| `Shift` + click | Select a range of files |
+| `Shift` + drag in the terminal | Select text even while a TUI program owns the mouse |
+| Double-click | Insert a cheatsheet command / run a history entry |
+| `Enter` / `Esc` | Confirm / cancel the focused dialog |
+
+## Data, security & privacy
+
+Everything lives in one directory:
+
+| Platform | Directory |
+|---|---|
+| macOS | `~/Library/Application Support/com.tinyterm.app/` |
+| Windows | `%APPDATA%\com.tinyterm.app\` |
+| Fallback (unwritable data dir) | `~/.tinyterm-egui/` |
+
+| File | Contents |
+|---|---|
+| `tinyterm.db` | SQLite database: hosts, accounts, settings, trusted host keys |
+| `secret-key.pem` | RSA-2048 private key used to encrypt account secrets (mode `0600` on Unix) |
+| `zoom.txt` | Interface zoom, written only when it differs from the default |
+
+Set the `TINYTERM_DB` environment variable to use a different database file.
+
+**Secrets at rest.** Passwords and private keys are stored as
+`ttenc:v1:<wrapped-key>:<nonce>:<tag>:<ciphertext>` envelopes: a per-record
+AES-256-GCM key, itself wrapped with RSA-2048 OAEP/SHA-1 using this install's
+`secret-key.pem`. Copying the database to another machine therefore does not
+reveal any credential.
+
+**Host identity.** Before authenticating, the SSH host key is checked against
+the `SHA256:` fingerprints in `trusted_host_keys`. An unknown host asks for
+confirmation; a *changed* host key is reported as a possible
+man-in-the-middle attack and can be re-trusted from the settings list.
+
+**Network.** TinyTerm only opens the SSH/SFTP connections you ask for. There is
+no telemetry, no update ping and no cloud component.
+
+## Build from source
+
+Requires **Rust 1.85+** (stable) and the platform C toolchain. SQLite is
+bundled (`rusqlite` with the `bundled` feature), so nothing else is needed.
 
 ```bash
+git clone https://github.com/miaokela/tinyterm-egui.git
+cd tinyterm-egui
 cargo run --release
 ```
 
-首次构建会编译 eframe/wgpu 等依赖，耗时较长。若网络受限：
+The first build compiles egui/eframe and russh from scratch and takes several
+minutes. If the network is restricted:
 
 ```bash
 CARGO_NET_OFFLINE=true cargo build
 ```
 
-## 测试
+### Tests
 
 ```bash
 cargo test
 ```
 
-13 个测试覆盖：加密信封往返、SQLite CRUD 与设置迁移、终端仿真与按键编码、
-路径/进度/解析辅助函数、本地 tar 打包解包、删除保护，以及一个**进程内 russh
-测试服务器驱动的 SSH 端到端测试**（首次连接指纹提示 → 信任后握手 → 错误密码被拒 →
-密码认证成功 → exec / 远端 HOME / 远端 cwd → PTY shell 回显 → SFTP 子系统协商）。
+22 tests cover the encrypted-envelope round-trip, SQLite CRUD and settings
+migration, terminal emulation and key encoding, path / progress / history
+parsers, local `tar` packing and unpacking, deletion guards, headless UI
+layout, and a full SSH end-to-end run driven by an in-process `russh` server
+(unknown fingerprint → trust → handshake → rejected password → successful
+authentication → `exec` / remote `$HOME` / remote `cwd` → PTY echo → SFTP
+subsystem).
 
-## 数据位置
+### Packaging
 
-| 文件 | 路径 |
-|---|---|
-| SQLite | `~/Library/Application Support/com.tinyterm.app/tinyterm.db` |
-| 密钥 | 同目录 `secret-key.pem` |
-| 缩放 | 同目录 `zoom.txt` |
+`scripts/bundle-macos.sh` + `scripts/make-dmg.sh` produce the macOS app bundle
+and the styled `.dmg`; `scripts/windows-installer.nsi` builds the NSIS
+installer. [`.github/workflows/build.yml`](.github/workflows/build.yml) runs
+both on every `v*` tag, runs the test suite in release mode and publishes the
+artifacts as a GitHub Release.
 
-环境变量 `TINYTERM_DB` 可覆盖数据库路径（指向原版 `tinyterm.db` 即可直接复用历史主机与凭据）。
-若平台数据目录不可写，会自动回退到 `~/.tinyterm-egui/tinyterm.db`。
+## Project layout
 
-数据库 schema 与原版 TinyTerm **完全一致**，且加密信封格式相同，因此可以直接复用已有的
-`tinyterm.db`（凭据会自动解密）。
-
-## 已实现功能
-
-- 主机 / 凭据 CRUD、搜索、复制、连接
-- 多主机标签 + 多会话标签，标签切换保留终端上下文
-- SSH 连接、主机指纹信任流程（首次 / 变更）、密码与私钥认证
-- 完整终端仿真：256 色、粗体/斜体/下划线/反显、光标样式与闪烁、scrollback、文本选择与复制粘贴
-- 右侧辅助终端（独立 SSH 会话并排）
-- 文件管理器：本地/远程双栏、隐藏文件、路径编辑、重命名、新建文件夹、删除保护
-- 上传 / 下载：单文件、目录（tar 打包）、批次队列、进度、取消、冲突处理
-- 终端 cwd 跟随远端目录
-- 快捷操作栏：CPU / 内存 / 磁盘查询、常用指令库、shell 历史
-- 设置面板：字体、scrollback、光标、隐藏文件、界面缩放、已信任指纹管理
-- 主机可达性探测与自动重连
-- Toast 通知、统一确认对话框、登录提示、粘贴确认
-- 终端鼠标上报（SGR/X10，TUI 程序可用）、括号粘贴（bracketed paste）
-
-## 图标与品牌资源
-
-界面图标使用 [Phosphor Icons](https://phosphoricons.com)（MIT），字体文件内嵌在
-`assets/Phosphor.ttf`，常量在 `src/icons.rs`。之所以不直接依赖 `egui-phosphor`：
-该 crate 目前绑的是 egui 0.35，会把整个 egui 0.35/epaint 0.35 依赖树再编译一遍；
-直接内嵌 TTF 只增加约 490 KB 二进制体积。
-
-原版 TinyTerm 的品牌资源也一并复用：
-
-| 文件 | 来源 | 用途 |
-|---|---|---|
-| `assets/icon.png` | `src-tauri/icons/icon.png`（512×512） | 窗口图标（`ViewportBuilder::with_icon`） |
-| `assets/logo.png` | `public/assets/logo.png`（512×512） | 空状态 / 空会话里的 logo 贴图 |
-| `assets/icon.icns` | `src-tauri/icons/icon.icns` | macOS `.app` 包图标 |
-| `assets/icon.ico` | 由 `icon.png` 生成（16–256 全尺寸） | Windows exe 图标 + NSIS 安装包图标 |
-| `assets/screenshot.png` | 本机运行截图 | README 界面预览 |
-
-macOS 说明：winit 在 macOS 上**不支持** `set_window_icon`，Dock/Finder 图标只能来自
-`.app` 包里的 `.icns`，所以图标必须靠打包脚本写进 bundle（见下节）。
-
-## 打包与分发
-
-GitHub Actions 在推送 `v*` tag 时构建两个产物，并**同时发布到 GitHub Release**，
-从 `Releases` 页面直接下载（Actions 的 Artifacts 里也各留一份）：
-
-| 平台 | 产物 | 说明 |
-|---|---|---|
-| macOS 通用版 | `TinyTerm-macos-universal.dmg` | arm64 + x86_64 用 `lipo` 合并，带背景图的拖拽安装盘 |
-| Windows x86_64 | `TinyTerm-windows-x86_64-setup.exe` | NSIS 安装包，按用户安装，不需要管理员权限 |
-
-### macOS
-
-```bash
-./scripts/bundle-macos.sh      # 生成 target/release/TinyTerm.app 和 TinyTerm.dmg
-open target/release/TinyTerm.app
+```
+src/
+├── main.rs            entry point: storage, tokio runtime, eframe
+├── app.rs             eframe::App: layout, event pump, modal routing, shortcuts
+├── state.rs           application state (tabs, file manager, modals, toasts)
+├── actions.rs         state transitions (the store actions of the original app)
+├── models.rs          data models (host, account, settings, transfers)
+├── storage.rs         SQLite access, schema, data locations
+├── crypto.rs          ttenc:v1 secret envelope (RSA-OAEP + AES-256-GCM)
+├── ssh.rs             russh: connect, host-key check, auth, PTY, exec, SFTP
+├── session.rs         session manager and the UI event bus
+├── remote_fs.rs       SFTP operations and tar-based directory transfer
+├── local_fs.rs        local filesystem access and delete guards
+├── transfer.rs        upload/download orchestration (batches, conflicts)
+├── term.rs            vt100 emulation, grid rendering, key encoding
+├── theme.rs           design tokens (colour, radius, type, glow, starfield)
+├── widgets.rs         hand-painted controls (buttons, inputs, glyphs)
+└── ui/                one module per surface: sidebar, session tabs, terminal,
+                       file manager, quick actions, system info, hosts, accounts,
+                       settings, dialogs, toasts
 ```
 
-`scripts/make-dmg.sh` 生成带背景图的拖拽安装盘：左侧是 TinyTerm，右侧是
-`/Applications` 别名，背景图底部给出两种 Gatekeeper 拦截的解决办法。
+Anyone touching the design system should read
+[`skills/tinyterm-egui-dev/`](skills/tinyterm-egui-dev/SKILL.md) first: it holds
+the token tables, the layout constants, the SSH/SFTP event contract and the
+packaging pipeline. `docs/` contains the requirement baseline (`ANALYSIS.md`)
+and the backend / file-manager specifications.
 
-| 文件 | 用途 |
+## Architecture
+
+| Layer | Choice |
 |---|---|
-| `assets/dmg-background.png` / `@2x.png` | 660×440 / 1320×880 背景图 |
-| `scripts/make-dmg-background.swift` | 背景图生成器（改文案后重新运行即可） |
-| `scripts/make-dmg.sh` | 组装 `.app` → UDRW 镜像 → Finder 布局 → UDZO |
+| Windowing & rendering | `eframe` + `egui` 0.36 — glow on macOS and Linux, wgpu (D3D12, with the software rasterizer as a fallback for VMs and remote sessions) on Windows |
+| Async runtime | `tokio` (multi-threaded) for SSH, SFTP, transfers and file I/O |
+| SSH / SFTP | `russh` 0.63 (ring + flate2 + rsa) and `russh-sftp` 3 |
+| Terminal | `vt100` 0.16 for emulation, with a custom grid renderer on top |
+| Storage | `rusqlite` with bundled SQLite |
+| Secrets | `rsa`, `aes-gcm`, `sha1` for the `ttenc:v1` envelope |
 
-```bash
-swift scripts/make-dmg-background.swift          # 重新生成背景图
-scripts/make-dmg.sh dist/TinyTerm.app out.dmg    # 打包
-```
+Every region of the window is an explicit `Rect` painted by `src/theme.rs` and
+`src/widgets.rs` — no `SidePanel`/`CentralPanel`, no retained widget tree.
+Background work runs on the tokio runtime and reports back through an event bus
+that `app.rs` drains once per frame.
 
-布局靠 AppleScript 驱动 Finder 写入 `.DS_Store`；若当前环境不允许自动化控制
-Finder，脚本会照常产出 DMG，只是没有背景图和图标位置（会打印 warning）。
+## Compatibility with the original TinyTerm
 
-因为构建产物未做 Apple 签名与公证，用户首次打开会遇到两种情况，背景图里都写了：
+- **Same database** — the egui build uses the original app's `app_data_dir` and schema, so it opens an existing `tinyterm.db` directly (`TINYTERM_DB` overrides the path).
+- **Same secret format** — `ttenc:v1` envelopes are interchangeable; account secrets decrypt in either application.
+- **Added here** — a full settings panel (the web version had none), account management, and a layout that no longer depends on a WebView.
+- **Not carried over** — see the limitations below.
 
-1. **「TinyTerm 已损坏，无法打开」** —— 从浏览器下载的文件带 quarantine 属性，
-   打开「终端」执行 `xattr -cr /Applications/TinyTerm.app` 即可。
-2. **「无法验证开发者」** —— 点「完成」关闭弹窗，再到
-   系统设置 → 隐私与安全性，找到 TinyTerm 点「仍要打开」。
+## Known limitations
 
-### Windows
+- Packages are published for macOS and Windows only; on Linux, build from source.
+- No port forwarding, jump hosts or SSH-agent forwarding.
+- Tabs and sessions are not restored after a restart (hosts, accounts, settings and trusted keys are persistent).
+- The file manager has no drag-and-drop between panes and no permission (`chmod`) editing.
+- Interface strings are Simplified Chinese only; there is no language switch yet.
+- The packages are unsigned, so macOS Gatekeeper and Windows SmartScreen warn on first launch.
 
-| 文件 | 用途 |
-|---|---|
-| `scripts/windows-installer.nsi` | NSIS 脚本：安装到 `%LOCALAPPDATA%\Programs\TinyTerm`，创建开始菜单/桌面快捷方式，写入「应用和功能」卸载项 |
-| `.cargo/config.toml` | 为 Windows 目标打开 `+crt-static`（见下） |
-| `build.rs` | 用 `winresource` 把 `assets/icon.ico` 和版本信息嵌进 exe（非 Windows 平台跳过） |
-| `assets/icon.ico` | 由 `scripts/make-windows-icon.swift` 从 `assets/icon.png` 生成 |
+## License & credits
 
-```powershell
-cargo build --release
-makensis /DAPP_VERSION=0.1.2 `
-  /DAPP_EXE="$PWD\target\release\tinyterm-egui.exe" `
-  /DOUT_FILE="$PWD\TinyTerm-0.1.2-setup.exe" `
-  /DICON_FILE="$PWD\assets\icon.ico" `
-  scripts\windows-installer.nsi
-```
+Released under the **MIT license** (declared in `Cargo.toml`).
 
-**关于 `VCRUNTIME140.dll was not found`**：MSVC 目标默认动态链接 VC 运行库，没装
-VC++ Redistributable 的机器上直接跑 exe 就会报这个错。`.cargo/config.toml` 给
-`x86_64-pc-windows-msvc` 加了 `-C target-feature=+crt-static`，把运行库静态链进
-exe，安装包因此不依赖任何额外组件。`main.rs` 里的
-`#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]`
-则保证 release 版不弹控制台窗口。
-
-**关于远程桌面/虚拟机里打不开**：Windows 版默认用 **wgpu** 渲染（DX12），并且自定义
-了适配器选择——优先独显/集显，没有可用 GPU 时退到软件光栅化（WARP），所以远程桌面
-会话和无 GPU 的云主机也能正常启动；macOS/Linux 仍然用 glow/OpenGL。
-启动日志写在 `%USERPROFILE%\.tinyterm-egui\tinyterm.log`，致命错误会弹原生对话框。
-
-## 与原版的差异（有意为之）
-
-1. 终端仿真使用 `vt100` 而非 xterm.js；已覆盖常用 VT100/xterm 序列。
-2. 使用 `russh`（纯 Rust）替代 libssh2，SFTP 与终端共用一条 SSH 连接（原版为独立连接）。
-3. 增加连接超时（30s），避免黑洞主机无限等待。
-4. 补齐原版缺失的完整设置面板。
-5. 侧边栏折叠、缩放等交互改用 egui 原生实现（`Cmd/Ctrl + +/-/0` 仍然可用）。
+- Interface icons: [Phosphor Icons](https://phosphoricons.com) (MIT), vendored as `assets/Phosphor.ttf` and registered as a font fallback instead of pulling in a second egui dependency tree.
+- Icon and logo assets come from the original TinyTerm project.
+- Built on [egui/eframe](https://github.com/emilk/egui), [tokio](https://tokio.rs), [russh](https://github.com/Eugeny/russh), [vt100](https://github.com/doy/vt100-rust) and [rusqlite](https://github.com/rusqlite/rusqlite).

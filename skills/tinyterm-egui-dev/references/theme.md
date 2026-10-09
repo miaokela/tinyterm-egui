@@ -33,6 +33,7 @@ BORDER_ACTIVE   rgba(112,191,255,0.60)
 SUCCESS         #57e3a5
 ERROR           #e0575c
 WARNING         #f0a040
+CONNECTING      #7cc9ff  // connecting dots + 正在连接… (never the orange)
 
 // terminal
 TERMINAL_TEXT   #d7e3f0
@@ -64,6 +65,7 @@ TERM_SELECTION  rgba(115,167,255,0.24)
 
 ```rust
 RADIUS_XS 4   RADIUS_SM 8   RADIUS_MD 12   RADIUS_LG 16   // CornerRadius (u8!)
+RADIUS_PANEL = RADIUS_SM                        // sidebar / terminal / FM frames
 
 TEXT_XS 12.0  TEXT_SM 13.0  TEXT_MD 14.0  TEXT_LG 16.0  TEXT_XL 20.0
 
@@ -146,6 +148,7 @@ All controls allocate their own rect and paint themselves; they return
 |---|---|
 | `primary_button(ui, label, enabled)` | 30 px tall, width = text + 40, accent fill, glow on hover, 3 disabled states |
 | `ghost_button(ui, label, enabled)` | transparent fill + border, used for every dialog action (「取消」等) |
+| `chip_button(ui, label, enabled)` | the compact accent chip (22 px tall, 8 px radius, `TEXT_XS` label, `+` glyph, accent fill/rim/text, glow on hover) for an inline "add" action inside a form — e.g. 新增账号 in the host form, where it stays visually below the 30 px list rows it sits next to |
 | `button_row(ui, rect, &[(label, enabled)]) -> Option<usize>` | right-aligned dialog action row; returns the clicked index |
 | `orb_button(ui, size, draw)` | the one circular icon button: nearly transparent at rest, four slowly rotating HUD brackets inside the rim; hover adds accent tint, accent border, glow and a brighter glyph. Used by both the 连接 row action and the 新增 toolbar action — they deliberately share one style rather than making the toolbar action "primary" |
 | `tick_ring(painter, center, radius, color, width, segments, span, phase)` | private helper behind both orbs — a ring of short arc segments; `phase` spins it (`ui.input(\|i\| i.time)`), which works because the app already repaints at ~30 fps for the drifting background |
@@ -158,6 +161,7 @@ All controls allocate their own rect and paint themselves; they return
 | `spinner(painter, center, radius, t, color)` / `css_spinner(ui, size)` | rotating arc, driven by `ui.input(|i| i.time)` |
 | `loading_blocks(ui, time, scale)` | the 3-block loading animation |
 | `stroke_open(painter, rect, radius, stroke, open_side)` | rounded rect with one side left open (collapsed panel headers) |
+| `measure_height(ui, width, id_salt, add_contents) -> f32` | lays a body closure out in an invisible child `Ui` (nothing painted, nothing interactive) and returns the height it wants — see the "size a modal to its content" pattern below |
 
 ### Pattern: measure text, then allocate
 
@@ -184,6 +188,33 @@ let inner = Rect::from_min_max(
 ui.put(inner, egui::TextEdit::singleline(value).frame(egui::Frame::NONE));
 ```
 
+### Pattern: size a modal to its content
+
+Modals are painted into a `Rect` computed *before* their body runs, so a body
+that is shorter than the shell leaves dead space above the footer. Measure the
+body first (`widgets::measure_height`) and derive the shell from it:
+
+```rust
+// Credential form: password mode is two fields shorter than private-key mode.
+let content = widgets::measure_height(ui, body_width, "cred-form-measure", |ui| {
+    fields(ui, &mut form, body_width);          // the same body the scroll area draws
+});
+let height = (HEADER_HEIGHT + BODY_TOP + content + BODY_SLACK + FOOTER_BAND)
+    .clamp(FORM_MIN_HEIGHT, FORM_MAX_HEIGHT)    // keep the old maximum as a cap
+    .min(screen.height() - 60.0);               // and the scroll area as the fallback
+```
+
+Notes:
+- The measured body must be a shared function of the fields, not a copy, or the
+  shell and the body drift apart.
+- The probe is measured before the real pass, so a click that changes what the
+  body contains (the auth toggle, an error banner) resizes the shell one frame
+  later — the app repaints at ~30 fps, so it lands immediately.
+- Keep the old fixed height as the cap (`FORM_MAX_HEIGHT`): the shell then only
+  ever shrinks, and the scroll area keeps handling bodies that outgrow it.
+- `BODY_SLACK` (a few px) absorbs the pixel-rounding difference between the two
+  passes; without it a body that exactly fits grows a scrollbar.
+
 ## 6. egui 0.36 API notes
 
 - `eframe::App` has **`fn ui(&mut self, ui: &mut egui::Ui, frame: &mut Frame)`**,
@@ -208,3 +239,4 @@ ui.put(inner, egui::TextEdit::singleline(value).frame(egui::Frame::NONE));
 | Context menu disappears behind a collapsed sidebar | Draw it in an `Area` with `Order::Foreground`. |
 | Selection copy returns nothing | The selection state must live where `selected_text()` reads it — keep one source of truth (`Terminal.selection`), not a copy in the UI state. |
 | Progress percentage never updates | Compare against `Option<u64>` (`last_pct != Some(pct)`), never a sentinel like `u64::MAX`. |
+| A modal has dead space above its footer buttons | Its body was laid out in a fixed rect. Measure it first and size the shell to the result — see the "size a modal to its content" pattern in §5. |
