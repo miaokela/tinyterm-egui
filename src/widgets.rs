@@ -101,6 +101,83 @@ pub fn ghost_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     response
 }
 
+/// Compact accent chip for an inline "add" action inside a form (e.g. 新增凭据).
+///
+/// Louder than [`ghost_button`] — accent fill, accent rim, accent text and a
+/// leading `+` glyph — but deliberately small (22 px, `TEXT_XS`), so it stays an
+/// inline action next to 30 px rows and the dialog's own footer buttons.
+pub fn chip_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
+    const HEIGHT: f32 = 22.0;
+    const PAD: f32 = 10.0;
+    const GLYPH: f32 = 9.0;
+    const GAP: f32 = 5.0;
+    let font = theme::f_xs();
+    let text_w = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), Color32::WHITE)
+        .size()
+        .x;
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(PAD * 2.0 + GLYPH + GAP + text_w, HEIGHT),
+        Sense::click(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let hovered = enabled && response.hovered();
+    let pressed = enabled && response.is_pointer_button_down_on();
+    let radius = theme::RADIUS_SM;
+    let corners = CornerRadius::same(radius);
+    let painter = ui.painter();
+    let fill = if !enabled {
+        tint(theme::ACCENT, 0.05)
+    } else if pressed {
+        tint(theme::ACCENT, 0.38)
+    } else if hovered {
+        tint(theme::ACCENT, 0.28)
+    } else {
+        tint(theme::ACCENT, 0.16)
+    };
+    let ink = if !enabled {
+        tint(theme::TEXT_MUTED, 0.6)
+    } else if hovered || pressed {
+        Color32::WHITE
+    } else {
+        theme::ACCENT_LIGHT
+    };
+    if hovered {
+        theme::glow(painter, rect, radius, theme::ACCENT, 0.7);
+    }
+    painter.rect_filled(rect, corners, fill);
+    painter.rect_stroke(
+        rect,
+        corners,
+        Stroke::new(
+            1.0,
+            if hovered {
+                theme::ACCENT_HOVER
+            } else {
+                tint(theme::ACCENT_LIGHT, 0.55)
+            },
+        ),
+        StrokeKind::Inside,
+    );
+    plus(
+        painter,
+        Pos2::new(rect.left() + PAD + GLYPH * 0.5, rect.center().y),
+        GLYPH,
+        ink,
+    );
+    painter.text(
+        Pos2::new(rect.left() + PAD + GLYPH + GAP, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        font,
+        ink,
+    );
+    response
+}
+
 /// Translucent version of a theme colour.
 ///
 /// egui's painter wants *premultiplied* channels, so scaling the colour and the
@@ -345,6 +422,34 @@ pub fn labelled(ui: &mut Ui, label: &str, required: bool) {
             .strong(),
     );
     ui.add_space(2.0);
+}
+
+/// Height the content added by `add_contents` wants at `width`.
+///
+/// Hand-painted modals put their body in a fixed rect, which leaves dead space
+/// above the footer whenever a form is shorter than its shell. Measuring the
+/// body first lets the caller shrink the shell to fit — and still fall back to
+/// the scroll area for the cases that do not fit on screen.
+///
+/// The probe is laid out in an invisible child [`Ui`]: it allocates exactly like
+/// the real thing but paints nothing and cannot be interacted with. It sits at
+/// the origin, so its widgets stay out of the way of the real ones (egui keys
+/// interaction off widget id, and the probe has ids of its own).
+pub fn measure_height(
+    ui: &mut Ui,
+    width: f32,
+    id_salt: &str,
+    add_contents: impl FnOnce(&mut Ui),
+) -> f32 {
+    let mut probe = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(id_salt)
+            .max_rect(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 10_000.0)))
+            .invisible(),
+    );
+    probe.set_width(width);
+    add_contents(&mut probe);
+    probe.min_rect().height()
 }
 
 /// A dot with a neon glow, used by host/session status indicators.

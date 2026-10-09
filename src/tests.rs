@@ -640,7 +640,7 @@ fn ui_text_metrics_are_script_independent() {
     let mut latin = 0.0;
     let mut cjk = 0.0;
     let mut mixed = 0.0;
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
         let ctx = ui.ctx();
         latin = measure(ctx, "ABC");
         cjk = measure(ctx, "中文测试");
@@ -655,4 +655,224 @@ fn ui_text_metrics_are_script_independent() {
         (latin - mixed).abs() < 0.51,
         "row heights differ: latin={latin} mixed={mixed}"
     );
+    // Nothing renders the font atlas here, and `epaint` asserts on a delta that
+    // is dropped unapplied (debug builds only) — drop it on purpose.
+    output.textures_delta.clear();
+}
+
+/// Headless context with the app's fonts and visuals installed, for the UI tests
+/// below.
+fn ui_context() -> egui::Context {
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx, "Menlo", 12.0);
+    crate::theme::install_visuals(&ctx);
+    ctx
+}
+
+/// Run one headless pass at the given viewport size.
+///
+/// The font texture delta is dropped on purpose: nothing renders it here, and
+/// `epaint` panics when a delta is dropped unapplied.
+fn run_ui(
+    ctx: &egui::Context,
+    screen: egui::Rect,
+    events: Vec<egui::Event>,
+    f: impl FnMut(&mut egui::Ui),
+) -> egui::FullOutput {
+    let input = egui::RawInput {
+        screen_rect: Some(screen),
+        events,
+        ..Default::default()
+    };
+    let mut output = ctx.run_ui(input, f);
+    output.textures_delta.clear();
+    output
+}
+
+/// The modal shell: the tallest `BG_CARD` rect in the pass (the backdrop and the
+/// inputs are painted in their own colours).
+fn shell_rect(shapes: &[egui::epaint::ClippedShape]) -> Option<egui::Rect> {
+    shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(r) if r.fill == crate::theme::BG_CARD => Some(r.rect),
+            _ => None,
+        })
+        .reduce(|a, b| if b.height() > a.height() { b } else { a })
+}
+
+/// Bottoms of the input/textarea rects that are visible *in full*: a field the
+/// body had to clip is left out, which is what makes a shell that is too short
+/// fail the test.
+fn visible_fields(shapes: &[egui::epaint::ClippedShape]) -> Vec<f32> {
+    shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(r)
+                if r.fill == crate::theme::BG_INPUT
+                    && r.rect.bottom() <= clipped.clip_rect.bottom() + 0.5 =>
+            {
+                Some(r.rect.bottom())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn ui_measure_height_matches_the_laid_out_content() {
+    fn stack(ui: &mut egui::Ui) {
+        ui.allocate_exact_size(egui::vec2(200.0, 30.0), egui::Sense::hover());
+        ui.allocate_exact_size(egui::vec2(200.0, 40.0), egui::Sense::hover());
+    }
+
+    let ctx = ui_context();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 720.0));
+    let (mut probe, mut reference) = (0.0, 0.0);
+    let _ = run_ui(&ctx, screen, Vec::new(), |ui| {
+        probe = crate::widgets::measure_height(ui, 200.0, "probe", stack);
+
+        // The same stack laid out for real — that is what the probe has to
+        // predict, since the shell is sized from the probe's number.
+        let rect = egui::Rect::from_min_size(egui::pos2(40.0, 60.0), egui::vec2(200.0, 10_000.0));
+        let mut content = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+        stack(&mut content);
+        reference = content.min_rect().height();
+    });
+
+    assert_eq!(reference, 76.0, "30 + 40 plus one 6 px item gap");
+    assert_eq!(probe, reference, "probe height differs from the real layout");
+}
+
+#[test]
+fn credential_form_shell_fits_its_content() {
+    let ctx = ui_context();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 720.0));
+
+    let (db, dir) = temp_db("cred-form-height");
+    let db = std::sync::Arc::new(db);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mgr = std::sync::Arc::new(crate::session::SessionManager::new(
+        rt.handle().clone(),
+        Default::default(),
+        db.clone(),
+    ));
+    let mut app = crate::state::AppState::new(db, mgr, Default::default(), 1.0);
+    app.modal = crate::state::ModalKind::CredentialForm;
+
+    let paint = |app: &mut crate::state::AppState, auth_type: &str| -> (egui::Rect, Vec<f32>) {
+        app.credential_form = Some(crate::state::CredentialFormState {
+            auth_type: auth_type.into(),
+            ..Default::default()
+        });
+        let output = run_ui(&ctx, screen, Vec::new(), |ui| {
+            crate::ui::credentials_modal::show(ui, app);
+        });
+        (
+            shell_rect(&output.shapes).expect("no shell was painted"),
+            visible_fields(&output.shapes),
+        )
+    };
+
+    let (password, password_fields) = paint(&mut app, "password");
+    let (private_key, private_key_fields) = paint(&mut app, "privateKey");
+
+    // Both forms fit: every field is drawn, and none of them was scrolled or
+    // clipped out of the body.
+    assert_eq!(password_fields.len(), 3, "password form fields");
+    assert_eq!(private_key_fields.len(), 4, "private-key form fields");
+
+    // The private-key form has two more fields, so the shell has to follow it
+    // down — the old code drew both in one fixed 540 px shell.
+    assert!(
+        password.height() + 100.0 < private_key.height(),
+        "the shell did not follow the field set: {} vs {}",
+        password.height(),
+        private_key.height()
+    );
+
+    // And the band under the last field is footer spacing, not a void: that is
+    // where the fixed shell used to leave ~250 px of empty glass in this mode.
+    let last_field = password_fields.iter().copied().fold(0.0, f32::max);
+    let gap = password.bottom() - last_field;
+    assert!(
+        gap < 90.0,
+        "password mode leaves {gap} px of empty space below its fields"
+    );
+    let _ = dir;
+}
+
+/// The credential form is measured by an invisible probe added in the same pass
+/// as the real widgets; make sure that probe cannot take a click away from them,
+/// and that a change it causes shows up as a resized shell.
+#[test]
+fn credential_form_interaction_survives_the_measuring_probe() {
+    /// The filled half of the auth toggle — the one colour nothing else uses.
+    fn active_segment(shapes: &[egui::epaint::ClippedShape]) -> Option<egui::Rect> {
+        let auth_fill = egui::Color32::from_rgba_premultiplied(29, 57, 102, 140);
+        shapes.iter().find_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(r) if r.fill == auth_fill => Some(r.rect),
+            _ => None,
+        })
+    }
+
+    let ctx = ui_context();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(520.0, 420.0));
+
+    let (db, dir) = temp_db("cred-form-click");
+    let db = std::sync::Arc::new(db);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mgr = std::sync::Arc::new(crate::session::SessionManager::new(
+        rt.handle().clone(),
+        Default::default(),
+        db.clone(),
+    ));
+    let mut app = crate::state::AppState::new(db, mgr, Default::default(), 1.0);
+    app.modal = crate::state::ModalKind::CredentialForm;
+    app.credential_form = Some(crate::state::CredentialFormState {
+        auth_type: "password".into(),
+        ..Default::default()
+    });
+    let show = |ui: &mut egui::Ui, app: &mut crate::state::AppState| {
+        crate::ui::credentials_modal::show(ui, app);
+    };
+
+    // The click has to land on the right half of the toggle, i.e. on 私钥.
+    let output = run_ui(&ctx, screen, Vec::new(), |ui| show(ui, &mut app));
+    let active = active_segment(&output.shapes).expect("no auth toggle was painted");
+    assert!(shell_rect(&output.shapes).is_some(), "no shell was painted");
+    let pos = egui::pos2(active.center().x + active.width() * 0.5, active.center().y);
+
+    for pressed in [true, false] {
+        run_ui(
+            &ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ],
+            |ui| show(ui, &mut app),
+        );
+    }
+
+    assert_eq!(
+        app.credential_form.as_ref().map(|f| f.auth_type.as_str()),
+        Some("privateKey"),
+        "the click never reached the toggle"
+    );
+    // …and 私钥 is what the form now shows, on a shell that still fits the screen.
+    assert_eq!(app.modal, crate::state::ModalKind::CredentialForm);
+    let output = run_ui(&ctx, screen, Vec::new(), |ui| show(ui, &mut app));
+    let shell = shell_rect(&output.shapes).expect("no shell");
+    assert!(
+        shell.height() <= screen.height() - 60.0,
+        "the shell grew past the viewport: {}",
+        shell.height()
+    );
+    let _ = dir;
 }

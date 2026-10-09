@@ -11,7 +11,19 @@ use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind,
 const SHELL_WIDTH: f32 = 520.0;
 const SHELL_HEIGHT: f32 = 430.0;
 const FORM_WIDTH: f32 = 460.0;
-const FORM_HEIGHT: f32 = 540.0;
+/// Shell height once the body stops fitting on screen; below that the shell hugs
+/// its content instead.
+const FORM_MAX_HEIGHT: f32 = 540.0;
+const FORM_MIN_HEIGHT: f32 = 240.0;
+const HEADER_HEIGHT: f32 = 50.0;
+/// Gap between the header rule and the first field.
+const BODY_TOP: f32 = 8.0;
+/// Body → shell bottom: the 30 px action row, its 16 px margin and the 10 px gap
+/// above it.
+const FOOTER_BAND: f32 = 56.0;
+/// Slack for the pixel-rounding difference between the measuring pass and the
+/// real one, so a body that fits never grows a scrollbar.
+const BODY_SLACK: f32 = 3.0;
 
 pub fn show(ui: &mut Ui, app: &mut AppState) {
     if app.modal != ModalKind::Credentials && app.modal != ModalKind::CredentialForm {
@@ -48,7 +60,7 @@ fn list(ui: &mut Ui, app: &mut AppState, screen: Rect) {
     painter.text(
         Pos2::new(header.left() + 20.0, header.center().y),
         Align2::LEFT_CENTER,
-        "Credentials",
+        "账号",
         theme::f_lg(),
         theme::TEXT_PRIMARY,
     );
@@ -82,7 +94,7 @@ fn list(ui: &mut Ui, app: &mut AppState, screen: Rect) {
     painter.text(
         Pos2::new(bar.left() + 20.0, bar.center().y),
         Align2::LEFT_CENTER,
-        "可复用的认证配置，在 Hosts 中选择引用。",
+        "可复用的账号，在 Hosts 中选择引用。",
         theme::f_xs(),
         theme::TEXT_MUTED,
     );
@@ -94,7 +106,7 @@ fn list(ui: &mut Ui, app: &mut AppState, screen: Rect) {
     let r_add = widgets::orb_button(&mut add_ui, 30.0, |p, r, c| {
         widgets::plus(p, r.center(), 13.0, c)
     })
-    .on_hover_text("新增凭据");
+    .on_hover_text("新增账号");
     if r_add.clicked() {
         app.credential_form = Some(CredentialFormState {
             auth_type: "password".into(),
@@ -111,7 +123,7 @@ fn list(ui: &mut Ui, app: &mut AppState, screen: Rect) {
         painter.text(
             list_rect.center(),
             Align2::CENTER_CENTER,
-            "暂无认证配置",
+            "暂无账号",
             theme::f_sm(),
             theme::TEXT_MUTED,
         );
@@ -253,8 +265,8 @@ fn credential_row(ui: &mut Ui, app: &mut AppState, profile: &Profile) {
     }
     if r_del.clicked() {
         app.confirm = Some(ConfirmRequest {
-            title: "删除 Credential".into(),
-            message: "确认删除该认证配置？".into(),
+            title: "删除账号".into(),
+            message: "确认删除该账号？".into(),
             confirm_text: "删除".into(),
             cancel_text: "取消".into(),
             action: ConfirmAction::DeleteCredential(profile.id.clone()),
@@ -268,7 +280,16 @@ fn form(ui: &mut Ui, app: &mut AppState, screen: Rect) {
         return;
     };
     let width = FORM_WIDTH.min(screen.width() - 40.0);
-    let height = FORM_HEIGHT.min(screen.height() - 60.0);
+    let body_width = width - 40.0;
+    // Measure the fields before drawing anything and size the shell to them:
+    // a password form is far shorter than a private-key one, and a fixed height
+    // would leave dead space above the footer for the shorter of the two.
+    let content_height = widgets::measure_height(ui, body_width, "cred-form-measure", |ui| {
+        fields(ui, &mut form, body_width);
+    });
+    let height = (HEADER_HEIGHT + BODY_TOP + content_height + BODY_SLACK + FOOTER_BAND)
+        .clamp(FORM_MIN_HEIGHT, FORM_MAX_HEIGHT)
+        .min(screen.height() - 60.0);
     let rect = Rect::from_center_size(screen.center(), Vec2::new(width, height));
     let painter = ui.painter().clone();
     painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_LG), theme::BG_CARD);
@@ -279,14 +300,14 @@ fn form(ui: &mut Ui, app: &mut AppState, screen: Rect) {
         StrokeKind::Inside,
     );
 
-    let header = Rect::from_min_size(rect.min, Vec2::new(width, 50.0));
+    let header = Rect::from_min_size(rect.min, Vec2::new(width, HEADER_HEIGHT));
     painter.text(
         Pos2::new(header.left() + 20.0, header.center().y),
         Align2::LEFT_CENTER,
         if form.editing_id.is_some() {
-            "编辑 Credential"
+            "编辑账号"
         } else {
-            "新建 Credential"
+            "新建账号"
         },
         theme::f_md(),
         theme::TEXT_PRIMARY,
@@ -320,123 +341,14 @@ fn form(ui: &mut Ui, app: &mut AppState, screen: Rect) {
     }
 
     let body = Rect::from_min_max(
-        Pos2::new(rect.left() + 20.0, header.bottom() + 8.0),
-        Pos2::new(rect.right() - 20.0, rect.bottom() - 56.0),
+        Pos2::new(rect.left() + 20.0, header.bottom() + BODY_TOP),
+        Pos2::new(rect.right() - 20.0, rect.bottom() - FOOTER_BAND),
     );
-    let full = body.width();
     let mut scroll = ui.new_child(egui::UiBuilder::new().max_rect(body));
     egui::ScrollArea::vertical()
         .id_salt("cred-form")
         .auto_shrink([false, false])
-        .show(&mut scroll, |ui| {
-            ui.set_width(full);
-            widgets::labelled(ui, "配置名称", true);
-            widgets::text_input(ui, &mut form.title, "例如: Production Root Key", full, false);
-
-            widgets::labelled(ui, "用户名", true);
-            widgets::text_input(ui, &mut form.username, "root", full, false);
-
-            widgets::labelled(ui, "认证方式", false);
-            let (r, _) = ui.allocate_exact_size(Vec2::new(full, 30.0), Sense::hover());
-            let half = full * 0.5;
-            let pw_rect = Rect::from_min_size(r.min, Vec2::new(half, 30.0));
-            let key_rect = Rect::from_min_size(Pos2::new(r.left() + half, r.top()), Vec2::new(half, 30.0));
-            let painter = ui.painter();
-            painter.rect_stroke(
-                r,
-                CornerRadius::same(theme::RADIUS_SM),
-                Stroke::new(1.0, theme::BORDER),
-                StrokeKind::Inside,
-            );
-            let r_pw = ui.interact(pw_rect, ui.id().with("auth-pw"), Sense::click());
-            let r_key = ui.interact(key_rect, ui.id().with("auth-key"), Sense::click());
-            if form.auth_type == "password" {
-                painter.rect_filled(
-                    pw_rect,
-                    CornerRadius {
-                        nw: theme::RADIUS_SM,
-                        sw: theme::RADIUS_SM,
-                        ne: 0,
-                        se: 0,
-                    },
-                    Color32::from_rgba_premultiplied(29, 57, 102, 140),
-                );
-            } else {
-                painter.rect_filled(
-                    key_rect,
-                    CornerRadius {
-                        nw: 0,
-                        sw: 0,
-                        ne: theme::RADIUS_SM,
-                        se: theme::RADIUS_SM,
-                    },
-                    Color32::from_rgba_premultiplied(29, 57, 102, 140),
-                );
-            }
-            painter.text(
-                pw_rect.center(),
-                Align2::CENTER_CENTER,
-                "密码",
-                theme::f_sm(),
-                if form.auth_type == "password" { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED },
-            );
-            painter.text(
-                key_rect.center(),
-                Align2::CENTER_CENTER,
-                "私钥",
-                theme::f_sm(),
-                if form.auth_type == "privateKey" { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED },
-            );
-            if r_pw.clicked() {
-                form.auth_type = "password".into();
-            }
-            if r_key.clicked() {
-                form.auth_type = "privateKey".into();
-            }
-
-            if form.auth_type == "password" {
-                widgets::labelled(ui, "密码", false);
-                let placeholder = if form.editing_id.is_some() {
-                    "留空则保持原密码"
-                } else {
-                    "登录密码"
-                };
-                widgets::text_input(ui, &mut form.password, placeholder, full, true);
-            } else {
-                widgets::labelled(ui, "私钥内容", false);
-                let placeholder = if form.editing_id.is_some() {
-                    "留空则保持原私钥"
-                } else {
-                    "-----BEGIN OPENSSH PRIVATE KEY-----"
-                };
-                widgets::text_area(ui, &mut form.private_key, placeholder, full, 140.0);
-                widgets::labelled(ui, "私钥密码（可选）", false);
-                let placeholder = if form.editing_id.is_some() {
-                    "留空则保持原私钥密码"
-                } else {
-                    "私钥保护密码"
-                };
-                widgets::text_input(ui, &mut form.passphrase, placeholder, full, true);
-            }
-
-            ui.add_space(6.0);
-            if let Some(err) = &form.error {
-                let (r, _) = ui.allocate_exact_size(Vec2::new(full, 26.0), Sense::hover());
-                ui.painter().rect_filled(
-                    r,
-                    CornerRadius::same(theme::RADIUS_XS),
-                    Color32::from_rgba_premultiplied(33, 8, 8, 33),
-                );
-                ui.painter().text(
-                    Pos2::new(r.left() + 10.0, r.center().y),
-                    Align2::LEFT_CENTER,
-                    err,
-                    theme::f_xs(),
-                    theme::ERROR,
-                );
-            }
-            ui.add_space(8.0);
-        });
+        .show(&mut scroll, |ui| fields(ui, &mut form, body_width));
 
     let footer = Rect::from_min_size(
         Pos2::new(rect.right() - 20.0 - 170.0, rect.bottom() - 46.0),
@@ -510,4 +422,118 @@ fn form(ui: &mut Ui, app: &mut AppState, screen: Rect) {
         };
         app.credential_form = None;
     }
+}
+
+/// The credential form's fields, laid out at `full` width.
+///
+/// Shared by the measuring pass and the real one, so the shell height always
+/// matches what is about to be painted.
+fn fields(ui: &mut Ui, form: &mut CredentialFormState, full: f32) {
+    ui.set_width(full);
+    widgets::labelled(ui, "配置名称", true);
+    widgets::text_input(ui, &mut form.title, "例如: Production Root Key", full, false);
+
+    widgets::labelled(ui, "用户名", true);
+    widgets::text_input(ui, &mut form.username, "root", full, false);
+
+    widgets::labelled(ui, "认证方式", false);
+    let (r, _) = ui.allocate_exact_size(Vec2::new(full, 30.0), Sense::hover());
+    let half = full * 0.5;
+    let pw_rect = Rect::from_min_size(r.min, Vec2::new(half, 30.0));
+    let key_rect = Rect::from_min_size(Pos2::new(r.left() + half, r.top()), Vec2::new(half, 30.0));
+    let painter = ui.painter();
+    painter.rect_stroke(
+        r,
+        CornerRadius::same(theme::RADIUS_SM),
+        Stroke::new(1.0, theme::BORDER),
+        StrokeKind::Inside,
+    );
+    let r_pw = ui.interact(pw_rect, ui.id().with("auth-pw"), Sense::click());
+    let r_key = ui.interact(key_rect, ui.id().with("auth-key"), Sense::click());
+    if form.auth_type == "password" {
+        painter.rect_filled(
+            pw_rect,
+            CornerRadius {
+                nw: theme::RADIUS_SM,
+                sw: theme::RADIUS_SM,
+                ne: 0,
+                se: 0,
+            },
+            Color32::from_rgba_premultiplied(29, 57, 102, 140),
+        );
+    } else {
+        painter.rect_filled(
+            key_rect,
+            CornerRadius {
+                nw: 0,
+                sw: 0,
+                ne: theme::RADIUS_SM,
+                se: theme::RADIUS_SM,
+            },
+            Color32::from_rgba_premultiplied(29, 57, 102, 140),
+        );
+    }
+    painter.text(
+        pw_rect.center(),
+        Align2::CENTER_CENTER,
+        "密码",
+        theme::f_sm(),
+        if form.auth_type == "password" { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED },
+    );
+    painter.text(
+        key_rect.center(),
+        Align2::CENTER_CENTER,
+        "私钥",
+        theme::f_sm(),
+        if form.auth_type == "privateKey" { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED },
+    );
+    if r_pw.clicked() {
+        form.auth_type = "password".into();
+    }
+    if r_key.clicked() {
+        form.auth_type = "privateKey".into();
+    }
+
+    if form.auth_type == "password" {
+        widgets::labelled(ui, "密码", false);
+        let placeholder = if form.editing_id.is_some() {
+            "留空则保持原密码"
+        } else {
+            "登录密码"
+        };
+        widgets::text_input(ui, &mut form.password, placeholder, full, true);
+    } else {
+        widgets::labelled(ui, "私钥内容", false);
+        let placeholder = if form.editing_id.is_some() {
+            "留空则保持原私钥"
+        } else {
+            "-----BEGIN OPENSSH PRIVATE KEY-----"
+        };
+        widgets::text_area(ui, &mut form.private_key, placeholder, full, 140.0);
+        widgets::labelled(ui, "私钥密码（可选）", false);
+        let placeholder = if form.editing_id.is_some() {
+            "留空则保持原私钥密码"
+        } else {
+            "私钥保护密码"
+        };
+        widgets::text_input(ui, &mut form.passphrase, placeholder, full, true);
+    }
+
+    ui.add_space(6.0);
+    if let Some(err) = &form.error {
+        let (r, _) = ui.allocate_exact_size(Vec2::new(full, 26.0), Sense::hover());
+        ui.painter().rect_filled(
+            r,
+            CornerRadius::same(theme::RADIUS_XS),
+            Color32::from_rgba_premultiplied(33, 8, 8, 33),
+        );
+        ui.painter().text(
+            Pos2::new(r.left() + 10.0, r.center().y),
+            Align2::LEFT_CENTER,
+            err,
+            theme::f_xs(),
+            theme::ERROR,
+        );
+    }
+    ui.add_space(8.0);
 }

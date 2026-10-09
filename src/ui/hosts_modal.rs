@@ -423,10 +423,10 @@ fn form(ui: &mut Ui, app: &mut AppState, screen: Rect) {
             });
             let _ = &mut row;
 
-            widgets::labelled(ui, "Credential（可选）", false);
+            widgets::labelled(ui, "账号（可选）", false);
             let mut open_cred_form = false;
             ui.horizontal(|ui| {
-                if widgets::ghost_button(ui, "＋ 新增凭据", true).clicked() {
+                if widgets::chip_button(ui, "新增账号", true).clicked() {
                     open_cred_form = true;
                 }
             });
@@ -441,7 +441,7 @@ fn form(ui: &mut Ui, app: &mut AppState, screen: Rect) {
             let creds = app.profiles.clone();
             if creds.is_empty() {
                 ui.label(
-                    egui::RichText::new("暂无 Credential，连接时将提示输入用户名和密码")
+                    egui::RichText::new("暂无账号，连接时将提示输入用户名和密码")
                         .size(theme::TEXT_XS)
                         .color(theme::TEXT_MUTED),
                 );
@@ -453,37 +453,64 @@ fn form(ui: &mut Ui, app: &mut AppState, screen: Rect) {
                         Sense::click(),
                     );
                     let painter = ui.painter();
+                    let radius = CornerRadius::same(theme::RADIUS_XS);
                     painter.rect_filled(
                         r,
-                        CornerRadius::same(theme::RADIUS_XS),
+                        radius,
                         if selected {
-                            Color32::from_rgba_premultiplied(28, 49, 84, 160)
+                            widgets::tint(theme::ACCENT, 0.26)
                         } else if resp.hovered() {
-                            Color32::from_rgba_premultiplied(20, 40, 70, 110)
+                            widgets::tint(theme::ACCENT, 0.12)
                         } else {
                             Color32::from_rgba_premultiplied(11, 24, 46, 60)
                         },
                     );
+                    if selected {
+                        // The sidebar's "active" language: accent rim + a glowing
+                        // bar on the leading edge, so the chosen row is obvious at
+                        // a glance and the rest of the list stays dim.
+                        painter.rect_stroke(
+                            r,
+                            radius,
+                            Stroke::new(1.0, widgets::tint(theme::ACCENT_LIGHT, 0.8)),
+                            StrokeKind::Inside,
+                        );
+                        let bar = Rect::from_min_size(
+                            Pos2::new(r.left(), r.top() + 5.0),
+                            Vec2::new(3.0, r.height() - 10.0),
+                        );
+                        theme::glow(painter, bar, 2, theme::ACCENT, 0.9);
+                        painter.rect_filled(
+                            bar,
+                            CornerRadius {
+                                nw: 0,
+                                sw: 0,
+                                ne: 2,
+                                se: 2,
+                            },
+                            theme::ACCENT_LIGHT,
+                        );
+                    }
                     painter.text(
-                        Pos2::new(r.left() + 10.0, r.center().y),
+                        Pos2::new(r.left() + 12.0, r.center().y),
                         Align2::LEFT_CENTER,
                         if cred.is_key() { "KEY" } else { "PWD" },
                         theme::font_sans(theme::TEXT_XS - 2.0),
-                        theme::ACCENT_LIGHT,
+                        if selected { theme::ACCENT_HOVER } else { theme::ACCENT_LIGHT },
                     );
                     painter.text(
                         Pos2::new(r.left() + 52.0, r.center().y),
                         Align2::LEFT_CENTER,
                         theme::truncate(painter, &cred.title, &theme::f_xs(), full * 0.4),
                         theme::f_xs(),
-                        theme::TEXT_PRIMARY,
+                        if selected { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY },
                     );
                     painter.text(
                         Pos2::new(r.right() - 12.0, r.center().y),
                         Align2::RIGHT_CENTER,
                         &cred.username,
                         theme::font_mono(theme::TEXT_XS - 1.0),
-                        theme::TEXT_MUTED,
+                        if selected { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED },
                     );
                     if resp.clicked() {
                         form.profile_id = if selected {

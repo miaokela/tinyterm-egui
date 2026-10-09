@@ -111,7 +111,7 @@ impl AppState {
         {
             Ok(()) => {
                 self.load_profiles();
-                self.toast("凭据已保存", ToastKind::Success);
+                self.toast("账号已保存", ToastKind::Success);
             }
             Err(e) => self.toast(format!("保存失败: {e}"), ToastKind::Error),
         }
@@ -123,7 +123,7 @@ impl AppState {
             return;
         }
         self.load_profiles();
-        self.toast("凭据已删除", ToastKind::Success);
+        self.toast("账号已删除", ToastKind::Success);
     }
 
     // ── Host key trust ───────────────────────────────────────────────────────
