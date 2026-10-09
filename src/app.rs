@@ -305,7 +305,7 @@ impl TinyTermApp {
         );
         if tab.sessions.is_empty() {
             let painter = ui.painter().clone();
-            theme::glass_panel(&painter, workspace, theme::RADIUS_MD);
+            theme::glass_panel(&painter, workspace, theme::RADIUS_PANEL);
             let inner = workspace.shrink(4.0);
             painter.rect_filled(
                 inner,
@@ -372,14 +372,14 @@ impl TinyTermApp {
         let cr = CornerRadius {
             nw: 0,
             ne: 0,
-            sw: theme::RADIUS_MD,
-            se: theme::RADIUS_MD,
+            sw: theme::RADIUS_PANEL,
+            se: theme::RADIUS_PANEL,
         };
         painter.rect_filled(terminal_area, cr, theme::BG_PANEL);
         crate::widgets::stroke_open(
             &painter,
             terminal_area,
-            theme::RADIUS_MD,
+            theme::RADIUS_PANEL,
             Stroke::new(1.0, theme::BORDER),
             crate::widgets::OpenSide::Top,
         );
@@ -474,7 +474,7 @@ impl TinyTermApp {
 
     fn empty_state(&mut self, ui: &mut egui::Ui, rect: Rect) {
         let painter = ui.painter().clone();
-        theme::glass_panel(&painter, rect, theme::RADIUS_MD);
+        theme::glass_panel(&painter, rect, theme::RADIUS_PANEL);
         let center = rect.center();
         let circle = Rect::from_center_size(center - Vec2::new(0.0, 30.0), Vec2::splat(120.0));
         painter.circle_filled(

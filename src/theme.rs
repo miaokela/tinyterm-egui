@@ -52,6 +52,10 @@ pub const SUCCESS: Color32 = Color32::from_rgb(0x57, 0xe3, 0xa5);
 pub const ERROR: Color32 = Color32::from_rgb(0xe0, 0x57, 0x5c);
 /// `--color-warning: #f0a040`
 pub const WARNING: Color32 = Color32::from_rgb(0xf0, 0xa0, 0x40);
+/// The connecting state (`--color-warning` in the web client really is this calm
+/// blue — [`WARNING`]'s orange is only used for tips there). Kept separate so a
+/// connection in progress never reads as a failure.
+pub const CONNECTING: Color32 = Color32::from_rgb(0x7c, 0xc9, 0xff);
 
 /// `--color-terminal-text: #d7e3f0`
 pub const TERMINAL_TEXT: Color32 = Color32::from_rgb(0xd7, 0xe3, 0xf0);
@@ -90,6 +94,11 @@ pub const RADIUS_XS: u8 = 4;
 pub const RADIUS_SM: u8 = 8;
 pub const RADIUS_MD: u8 = 12;
 pub const RADIUS_LG: u8 = 16;
+/// The app's outer frames — sidebar, workspace/terminal, tab strip, file
+/// manager — share one radius so the panels read as a single system. Surfaces
+/// nested inside them step down from it (a 4 px inset lands on
+/// [`RADIUS_XS`]), which is what keeps their corners concentric.
+pub const RADIUS_PANEL: u8 = RADIUS_SM;
 
 // ── Text sizes (CSS px, before the app zoom factor) ──────────────────────────
 

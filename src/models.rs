@@ -352,7 +352,7 @@ impl SessionStatus {
     pub fn dot_color(self) -> egui::Color32 {
         match self {
             Self::Connected => crate::theme::SUCCESS,
-            Self::Connecting => crate::theme::WARNING,
+            Self::Connecting => crate::theme::CONNECTING,
             Self::Error => crate::theme::ERROR,
             Self::Disconnected => egui::Color32::from_rgb(0x96, 0x96, 0xa2),
         }

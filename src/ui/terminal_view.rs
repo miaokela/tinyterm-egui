@@ -47,8 +47,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, rect: Rect, pane: TerminalPane<'_>)
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new("正在连接...")
-                        .size(theme::TEXT_SM)
-                        .color(theme::WARNING),
+                        // Same face as the terminal grid, so the overlay reads as
+                        // part of the pane rather than as a dialog.
+                        .font(theme::font_mono(theme::TEXT_MD))
+                        .color(theme::CONNECTING),
                 );
             });
         }
@@ -582,7 +584,7 @@ fn render_status_overlay(
         Color32::from_rgba_premultiplied(9, 11, 16, 200)
     };
     let painter = ui.painter().clone();
-    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_MD), bg);
+    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_PANEL), bg);
 
     let mut child = ui.new_child(
         egui::UiBuilder::new()

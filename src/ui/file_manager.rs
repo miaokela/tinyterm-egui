@@ -62,13 +62,13 @@ fn collapse_bar(
     painter.rect_filled(
         rect,
         if collapsed {
-            CornerRadius::same(theme::RADIUS_MD)
+            CornerRadius::same(theme::RADIUS_PANEL)
         } else {
             CornerRadius {
                 nw: 0,
                 ne: 0,
-                sw: theme::RADIUS_MD,
-                se: theme::RADIUS_MD,
+                sw: theme::RADIUS_PANEL,
+                se: theme::RADIUS_PANEL,
             }
         },
         Color32::from_rgba_premultiplied(6, 15, 31, 204),
@@ -78,7 +78,7 @@ fn collapse_bar(
         // across (and visually square off) the rounded corners.
         painter.rect_stroke(
             rect,
-            CornerRadius::same(theme::RADIUS_MD),
+            CornerRadius::same(theme::RADIUS_PANEL),
             Stroke::new(1.0, theme::BORDER),
             StrokeKind::Inside,
         );
@@ -169,8 +169,8 @@ fn collapse_bar(
 fn content(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rect) {
     let painter = ui.painter().clone();
     let top_round = CornerRadius {
-        nw: theme::RADIUS_MD,
-        ne: theme::RADIUS_MD,
+        nw: theme::RADIUS_PANEL,
+        ne: theme::RADIUS_PANEL,
         sw: 0,
         se: 0,
     };
@@ -305,8 +305,8 @@ fn transfer_queue(
     painter.rect_filled(
         rect,
         CornerRadius {
-            nw: theme::RADIUS_MD,
-            ne: theme::RADIUS_MD,
+            nw: theme::RADIUS_PANEL,
+            ne: theme::RADIUS_PANEL,
             sw: 0,
             se: 0,
         },

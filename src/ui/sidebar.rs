@@ -10,7 +10,7 @@ pub const TAB_HEIGHT: f32 = 32.0;
 
 pub fn show(ui: &mut Ui, app: &mut AppState, rect: Rect) {
     let painter = ui.painter().clone();
-    theme::glass_panel(&painter, rect, theme::RADIUS_LG);
+    theme::glass_panel(&painter, rect, theme::RADIUS_PANEL);
 
     let collapsed = app.sidebar_collapsed;
 
@@ -249,7 +249,7 @@ fn host_tab_row(ui: &mut Ui, app: &mut AppState, tab_id: &str, index: usize, col
     } else {
         match status {
             SessionStatus::Connected => theme::SUCCESS,
-            SessionStatus::Connecting => theme::WARNING,
+            SessionStatus::Connecting => theme::CONNECTING,
             SessionStatus::Error => theme::ERROR,
             SessionStatus::Disconnected => Color32::from_rgba_premultiplied(107, 90, 148, 115),
         }

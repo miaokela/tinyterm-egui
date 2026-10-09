@@ -13,8 +13,8 @@ const TAB_MAX_WIDTH: f32 = 200.0;
 pub fn show(ui: &mut Ui, app: &mut AppState, rect: Rect, tab: &HostTab) {
     let painter = ui.painter().clone();
     let cr = CornerRadius {
-        nw: theme::RADIUS_MD,
-        ne: theme::RADIUS_MD,
+        nw: theme::RADIUS_PANEL,
+        ne: theme::RADIUS_PANEL,
         sw: 0,
         se: 0,
     };
@@ -28,7 +28,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, rect: Rect, tab: &HostTab) {
     widgets::stroke_open(
         &painter,
         rect,
-        theme::RADIUS_MD,
+        theme::RADIUS_PANEL,
         Stroke::new(1.0, theme::BORDER),
         widgets::OpenSide::Bottom,
     );
