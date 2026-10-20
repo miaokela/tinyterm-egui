@@ -112,8 +112,8 @@ pub const TEXT_XL: f32 = 20.0;
 
 pub const SIDEBAR_WIDTH: f32 = 200.0;
 pub const SIDEBAR_COLLAPSED_WIDTH: f32 = 48.0;
-pub const TABSTRIP_HEIGHT: f32 = 38.0;
-pub const CHROME_TAB_HEIGHT: f32 = 30.0;
+pub const TABSTRIP_HEIGHT: f32 = 35.0;
+pub const CHROME_TAB_HEIGHT: f32 = 28.0;
 pub const APP_BODY_PADDING: f32 = 10.0;
 pub const APP_BODY_TOP_PADDING: f32 = 6.0;
 pub const APP_BODY_GAP: f32 = 8.0;

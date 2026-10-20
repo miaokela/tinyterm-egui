@@ -6,9 +6,8 @@ use crate::theme;
 use crate::widgets;
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-const TAB_HEIGHT: f32 = 30.0;
-const TAB_MIN_WIDTH: f32 = 100.0;
-const TAB_MAX_WIDTH: f32 = 200.0;
+const TAB_MIN_WIDTH: f32 = 96.0;
+const TAB_MAX_WIDTH: f32 = 192.0;
 
 pub fn show(ui: &mut Ui, app: &mut AppState, rect: Rect, tab: &HostTab) {
     let painter = ui.painter().clone();
@@ -184,9 +183,9 @@ fn chrome_tab(
         .layout_no_wrap(title.to_owned(), font.clone(), Color32::WHITE)
         .size()
         .x;
-    let width = (title_w + 52.0).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH);
+    let width = (title_w + 48.0).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH);
     let (rect, response) = ui.allocate_exact_size(
-        Vec2::new(width, TAB_HEIGHT + 6.0),
+        Vec2::new(width, theme::CHROME_TAB_HEIGHT + 5.0),
         Sense::click(),
     );
     if !ui.is_rect_visible(rect) {
@@ -195,8 +194,11 @@ fn chrome_tab(
     // Lift the tab 1 px off the strip's bottom edge so it never sits exactly on
     // the seam with the terminal area below.
     let tab_rect = Rect::from_min_size(
-        Pos2::new(rect.left(), rect.bottom() - TAB_HEIGHT - 1.0),
-        Vec2::new(rect.width(), TAB_HEIGHT),
+        Pos2::new(
+            rect.left(),
+            rect.bottom() - theme::CHROME_TAB_HEIGHT - 1.0,
+        ),
+        Vec2::new(rect.width(), theme::CHROME_TAB_HEIGHT),
     );
     let cr = CornerRadius {
         nw: theme::RADIUS_SM,
@@ -210,16 +212,18 @@ fn chrome_tab(
     let disconnected = status == SessionStatus::Disconnected;
     let bg = if active {
         if disconnected {
-            Color32::from_rgba_premultiplied(59, 59, 71, 224)
+            Color32::from_rgba_premultiplied(59, 59, 71, 235)
         } else {
-            Color32::from_rgba_premultiplied(6, 24, 47, 245)
+            // A blue-tinted glass fill: distinct from the strip and from every
+            // hovered/inactive tab, but still quiet enough for the cosmic theme.
+            Color32::from_rgba_premultiplied(17, 49, 96, 240)
         }
     } else if disconnected {
-        Color32::from_rgba_premultiplied(76, 76, 88, 51)
+        Color32::from_rgba_premultiplied(76, 76, 88, 40)
     } else if hovered {
         Color32::from_rgba_premultiplied(22, 49, 96, 120)
     } else {
-        Color32::from_rgba_premultiplied(13, 13, 13, 15)
+        Color32::from_rgba_premultiplied(10, 18, 30, 26)
     };
     let alpha = if is_new {
         let age = crate::state::now_ms()
@@ -234,12 +238,15 @@ fn chrome_tab(
     painter.rect_filled(tab_rect, cr, bg.gamma_multiply(alpha));
 
     if active {
-        painter.line_segment(
-            [
-                Pos2::new(tab_rect.left() + theme::RADIUS_SM as f32, tab_rect.top() + 0.5),
-                Pos2::new(tab_rect.right() - theme::RADIUS_SM as f32, tab_rect.top() + 0.5),
-            ],
-            Stroke::new(1.0, Color32::from_rgba_premultiplied(29, 49, 65, 97)),
+        // A single 1 px accent contour: across the rounded top and straight
+        // down both sides. The top bar and the side borders are now one
+        // continuous line, so the corners have no thick cap or visible seam.
+        widgets::stroke_open(
+            painter,
+            tab_rect,
+            theme::RADIUS_SM,
+            Stroke::new(1.0, theme::ACCENT_HOVER.gamma_multiply(alpha)),
+            widgets::OpenSide::Bottom,
         );
     }
 
@@ -255,9 +262,21 @@ fn chrome_tab(
     } else {
         1.0
     };
-    painter.circle_filled(dot_center, 3.0, dot_color.gamma_multiply(pulse));
-    if status == SessionStatus::Connected {
-        painter.circle_stroke(dot_center, 4.5, Stroke::new(1.0, Color32::from_rgba_unmultiplied(87, 227, 165, 60)));
+    // Inactive tabs keep a readable but recessed status dot; the active one is
+    // larger, brighter and gets the connected halo.
+    let dot_radius = if active { 3.5 } else { 2.5 };
+    let dot_alpha = if active { 1.0 } else { 0.6 };
+    painter.circle_filled(
+        dot_center,
+        dot_radius,
+        dot_color.gamma_multiply(pulse * dot_alpha),
+    );
+    if status == SessionStatus::Connected && active {
+        painter.circle_stroke(
+            dot_center,
+            5.0,
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(87, 227, 165, 90)),
+        );
     }
 
     // Title
@@ -266,16 +285,16 @@ fn chrome_tab(
     let label = theme::truncate(painter, title, &font, (text_right - text_left).max(10.0));
     let text_color = if active {
         if disconnected {
-            Color32::from_rgba_premultiplied(212, 212, 217, 235)
+            Color32::from_rgba_premultiplied(220, 220, 228, 245)
         } else {
             Color32::WHITE
         }
     } else if disconnected {
-        Color32::from_rgba_premultiplied(143, 143, 156, 184)
+        Color32::from_rgba_premultiplied(126, 126, 138, 168)
     } else if hovered {
-        Color32::from_rgba_premultiplied(209, 221, 235, 230)
+        Color32::from_rgba_premultiplied(201, 216, 233, 220)
     } else {
-        Color32::from_rgba_premultiplied(141, 168, 195, 184)
+        Color32::from_rgba_premultiplied(124, 151, 178, 155)
     };
     painter.text(
         Pos2::new(text_left, tab_rect.center().y),
@@ -297,10 +316,12 @@ fn chrome_tab(
     );
     let opacity = if close.hovered() {
         1.0
-    } else if active || hovered {
-        0.75
+    } else if active {
+        0.9
+    } else if hovered {
+        0.65
     } else {
-        0.35
+        0.22
     };
     widgets::cross(
         painter,

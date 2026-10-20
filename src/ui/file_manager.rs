@@ -58,6 +58,7 @@ fn collapse_bar(
         .count();
 
     let response = ui.interact(rect, ui.id().with(("fm-bar", session_id)), Sense::click());
+    let hovered = response.hovered();
     let painter = ui.painter();
     painter.rect_filled(
         rect,
@@ -71,7 +72,12 @@ fn collapse_bar(
                 se: theme::RADIUS_PANEL,
             }
         },
-        Color32::from_rgba_premultiplied(6, 15, 31, 204),
+        if hovered {
+            // Light up the whole bar so it reads as one clickable control.
+            Color32::from_rgba_premultiplied(14, 36, 68, 235)
+        } else {
+            Color32::from_rgba_premultiplied(6, 15, 31, 204)
+        },
     );
     if collapsed {
         // Rounded outline all the way round; a straight top hairline would cut
@@ -79,7 +85,14 @@ fn collapse_bar(
         painter.rect_stroke(
             rect,
             CornerRadius::same(theme::RADIUS_PANEL),
-            Stroke::new(1.0, theme::BORDER),
+            Stroke::new(
+                1.0,
+                if hovered {
+                    theme::BORDER_ACTIVE
+                } else {
+                    theme::BORDER
+                },
+            ),
             StrokeKind::Inside,
         );
     } else {
@@ -89,34 +102,52 @@ fn collapse_bar(
                 Pos2::new(rect.left(), rect.top() + 0.5),
                 Pos2::new(rect.right(), rect.top() + 0.5),
             ],
-            Stroke::new(1.0, Color32::from_rgba_premultiplied(17, 40, 77, 51)),
+            Stroke::new(
+                1.0,
+                if hovered {
+                    Color32::from_rgba_premultiplied(58, 132, 255, 110)
+                } else {
+                    Color32::from_rgba_premultiplied(17, 40, 77, 51)
+                },
+            ),
         );
     }
 
     let mut x = rect.left() + 14.0;
-    // Chevron
-    widgets::chevron(
+    // Chevron: down when collapsed, up when expanded (matches the web client).
+    // This is the state indicator for the whole bar; hover brightens it so it
+    // reads as clickable.
+    let chevron_glyph = if collapsed {
+        crate::icons::CARET_DOWN
+    } else {
+        crate::icons::CARET_UP
+    };
+    let fg = if hovered {
+        theme::TEXT_PRIMARY
+    } else {
+        theme::TEXT_MUTED
+    };
+    widgets::icon(
         painter,
         Pos2::new(x + 6.0, rect.center().y),
-        9.0,
-        false,
-        theme::TEXT_MUTED,
+        9.0 * 1.25,
+        chevron_glyph,
+        fg,
     );
-    if !collapsed {
-        // rotate: up-chevron drawn as inverted
-        painter.rect_filled(
-            Rect::from_center_size(Pos2::new(x + 6.0, rect.center().y), Vec2::splat(0.1)),
-            0,
-            Color32::TRANSPARENT,
-        );
-    }
     x += 18.0;
+    let response = response
+        .on_hover_text(if collapsed {
+            "展开文件管理"
+        } else {
+            "折叠文件管理"
+        })
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     // Hard-drive glyph
     let drive = Rect::from_center_size(Pos2::new(x + 6.0, rect.center().y), Vec2::new(12.0, 9.0));
     painter.rect_stroke(
         drive,
         CornerRadius::same(2),
-        Stroke::new(1.2, theme::TEXT_MUTED),
+        Stroke::new(1.2, fg),
         StrokeKind::Inside,
     );
     painter.line_segment(
@@ -124,7 +155,7 @@ fn collapse_bar(
             Pos2::new(drive.left(), drive.center().y),
             Pos2::new(drive.right(), drive.center().y),
         ],
-        Stroke::new(1.0, theme::TEXT_MUTED),
+        Stroke::new(1.0, fg),
     );
     x += 20.0;
     painter.text(
@@ -132,7 +163,11 @@ fn collapse_bar(
         Align2::LEFT_CENTER,
         "文件管理",
         theme::f_xs(),
-        theme::TEXT_SECONDARY,
+        if hovered {
+            theme::TEXT_PRIMARY
+        } else {
+            theme::TEXT_SECONDARY
+        },
     );
     x += 62.0;
 
