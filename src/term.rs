@@ -166,18 +166,20 @@ impl Terminal {
 
     /// Apply the scroll offset to the screen (must be called before rendering).
     pub fn apply_scroll(&mut self) {
-        let max = self.parser.screen().scrollback();
-        if self.scroll_offset > max {
-            self.scroll_offset = max;
-        }
+        // `Screen::scrollback()` returns the *current* offset, not the maximum.
+        // `set_scrollback()` clamps to the real maximum, so write first and read
+        // the clamped value back.
         self.parser.screen_mut().set_scrollback(self.scroll_offset);
+        self.scroll_offset = self.parser.screen().scrollback();
     }
 
     pub fn scroll_by(&mut self, delta: i32) {
-        let max = self.parser.screen().scrollback();
-        let next = (self.scroll_offset as i32 + delta).clamp(0, max as i32);
-        self.scroll_offset = next as usize;
-        self.parser.screen_mut().set_scrollback(self.scroll_offset);
+        let current = self.parser.screen().scrollback() as i32;
+        let next = (current + delta).max(0) as usize;
+        // The emulator clamps `next` to the actual scrollback length; mirror the
+        // clamped value so the UI never holds an offset it cannot display.
+        self.parser.screen_mut().set_scrollback(next);
+        self.scroll_offset = self.parser.screen().scrollback();
     }
 
     pub fn scroll_to_bottom(&mut self) {

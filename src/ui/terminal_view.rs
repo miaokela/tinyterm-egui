@@ -142,14 +142,7 @@ fn render_connected(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rec
         app.terminal_ui_mut(session_id).selection = term::Selection::default();
     }
     let mut has_focus = ctx.memory(|m| m.has_focus(response.id));
-    if !has_focus
-        && ctx.memory(|m| m.focused().is_none())
-        && app.modal == crate::state::ModalKind::None
-        && app.paste_confirm.is_none()
-        && app.login_prompt.is_none()
-        && app.confirm.is_none()
-        && app.conflict.is_none()
-    {
+    if !has_focus && ctx.memory(|m| m.focused().is_none()) && !app.overlay_owns_keyboard() {
         ctx.memory_mut(|m| m.request_focus(response.id));
         has_focus = true;
     }
@@ -175,7 +168,7 @@ fn render_connected(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rec
     }
 
     // ── Mouse reporting (TUI apps such as htop / vim) ────────────────────────
-    let (mouse_mode, mouse_sgr, _bracketed_paste) = {
+    let (mouse_mode, mouse_sgr, alternate_screen, app_cursor) = {
         let t = live.terminal.lock();
         let screen = t.screen();
         (
@@ -184,7 +177,8 @@ fn render_connected(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rec
                 screen.mouse_protocol_encoding(),
                 vt100::MouseProtocolEncoding::Sgr
             ),
-            screen.bracketed_paste(),
+            screen.alternate_screen(),
+            screen.application_cursor(),
         )
     };
     let mouse_reporting = mouse_mode != vt100::MouseProtocolMode::None
@@ -258,20 +252,68 @@ fn render_connected(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rec
         }
     }
 
-    // Scroll wheel → scrollback
-    if response.hovered() {
+    // Scroll wheel.
+    //
+    // Three cases:
+    //  * the app owns the mouse → the wheel was already sent above as a mouse
+    //    report (vim with `set mouse=a` scrolls itself);
+    //  * alternate screen without mouse reporting → translate the wheel to
+    //    cursor-up/down keys, like xterm's alternate-scroll mode. The alternate
+    //    grid has no scrollback, so local scrolling would do nothing; this is
+    //    what makes vim/less scroll even when they did not enable the mouse;
+    //  * primary screen → scroll the local scrollback.
+    if mouse_reporting {
+        app.terminal_ui_mut(session_id).wheel_accum = 0.0;
+    } else if response.hovered() && !app.overlay_owns_keyboard() {
         let delta = ctx.input(|i| i.smooth_scroll_delta.y);
-        if delta.abs() > 0.5 {
-            let lines = (delta / metrics.height).round() as i32;
-            if lines != 0 {
-                live.terminal.lock().scroll_by(lines);
+        if delta.abs() > 0.01 {
+            let step = metrics.height.max(1.0);
+            let mut arrows: Option<(String, usize)> = None;
+            let mut scroll_lines = 0i32;
+            {
+                let ui_state = app.terminal_ui_mut(session_id);
+                ui_state.wheel_accum += delta;
+
+                if alternate_screen {
+                    let notches = (ui_state.wheel_accum.abs() / step).floor() as usize;
+                    if notches > 0 {
+                        let direction = ui_state.wheel_accum.signum();
+                        ui_state.wheel_accum -= direction * step * notches as f32;
+                        let key = if direction > 0.0 {
+                            egui::Key::ArrowUp
+                        } else {
+                            egui::Key::ArrowDown
+                        };
+                        if let Some(bytes) =
+                            term::encode_key(Some(key), "", false, false, false, app_cursor)
+                        {
+                            arrows = Some((bytes, notches.min(8)));
+                        }
+                    }
+                } else {
+                    let lines = (ui_state.wheel_accum / step).trunc() as i32;
+                    if lines != 0 {
+                        ui_state.wheel_accum -= lines as f32 * step;
+                        scroll_lines = lines;
+                    }
+                }
+            }
+
+            if let Some((bytes, times)) = arrows {
+                app.mgr.write(session_id, bytes.repeat(times).into_bytes());
+            }
+            if scroll_lines != 0 {
+                live.terminal.lock().scroll_by(scroll_lines);
             }
         }
     }
 
     // ── Keyboard input ───────────────────────────────────────────────────────
-    if has_focus {
-        let app_cursor = live.terminal.lock().screen().application_cursor();
+    // A dialog above the terminal (the paste confirmation, a generic confirm,
+    // the login prompt, …) owns Enter/Escape while it is open. Without this
+    // guard the focused terminal would consume the same key press and write it
+    // to the shell before the dialog handles it.
+    if has_focus && !app.overlay_owns_keyboard() {
         let events = ctx.input(|i| i.events.clone());
         let mut to_send: Vec<String> = Vec::new();
         let mut paste: Option<String> = None;
@@ -364,7 +406,7 @@ fn render_connected(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rec
         }
         if let Some(text) = paste {
             app.paste_confirm = Some(PasteConfirm {
-                text,
+                text: normalize_paste(text),
                 session_id: session_id.to_string(),
             });
         }
@@ -442,7 +484,7 @@ fn render_connected(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rec
                     match read_clipboard(&ctx) {
                         Ok(text) if !text.is_empty() => {
                             app.paste_confirm = Some(PasteConfirm {
-                                text,
+                                text: normalize_paste(text),
                                 session_id: session_id.to_string(),
                             });
                         }
@@ -535,6 +577,19 @@ fn is_plain_key(key: egui::Key) -> bool {
             | Space | Minus | Equals | Plus | Period | Comma | Semicolon | Quote | Slash
             | Backslash | OpenBracket | CloseBracket | Backtick
     )
+}
+
+/// Normalize clipboard line endings before they reach the PTY.
+///
+/// macOS usually gives us `\n`, but text copied from Windows apps or generated
+/// by other tools can arrive as CRLF/CR. Remote editors then see a stray `^M`
+/// at every line end, which shows up as broken indentation/blank lines.
+pub(crate) fn normalize_paste(text: String) -> String {
+    if text.contains('\r') {
+        text.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        text
+    }
 }
 
 /// Read the clipboard.

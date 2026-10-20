@@ -171,6 +171,84 @@ fn terminal_emulation_and_key_encoding() {
 }
 
 #[test]
+fn terminal_scrollback_offset_uses_the_real_maximum() {
+    let mut term = term::Terminal::new(4, 20, 100);
+    for i in 0..30 {
+        term.process(format!("line {i}\r\n").as_bytes());
+    }
+
+    // The old implementation read `Screen::scrollback()` (the current offset)
+    // as if it were the maximum, so the first wheel step could never move.
+    assert_eq!(term.screen().scrollback(), 0);
+    term.scroll_by(3);
+    assert_eq!(term.scroll_offset, 3);
+    assert_eq!(term.screen().scrollback(), 3);
+
+    // Scrolling past the end is clamped by the emulator, and the UI offset has
+    // to mirror the clamped value.
+    term.scroll_by(10_000);
+    let max = term.scroll_offset;
+    assert!(max > 3, "expected real scrollback, got {max}");
+    term.apply_scroll();
+    assert_eq!(term.scroll_offset, max);
+
+    term.scroll_by(-10_000);
+    assert_eq!(term.scroll_offset, 0);
+    assert_eq!(term.screen().scrollback(), 0);
+}
+
+#[test]
+fn paste_line_endings_are_normalized() {
+    assert_eq!(
+        crate::ui::terminal_view::normalize_paste("a\r\nb\rc\n".into()),
+        "a\nb\nc\n"
+    );
+    assert_eq!(
+        crate::ui::terminal_view::normalize_paste("plain\nunix\n".into()),
+        "plain\nunix\n"
+    );
+}
+
+#[test]
+fn overlays_own_the_keyboard() {
+    let (db, dir) = temp_db("overlay-keyboard");
+    let db = std::sync::Arc::new(db);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mgr = std::sync::Arc::new(crate::session::SessionManager::new(
+        rt.handle().clone(),
+        Default::default(),
+        db.clone(),
+    ));
+    let mut app = crate::state::AppState::new(db, mgr, Default::default(), 1.0);
+
+    assert!(!app.overlay_owns_keyboard());
+
+    // The paste confirmation is the case that motivated the guard: Enter has
+    // to confirm the dialog instead of also reaching the shell.
+    app.paste_confirm = Some(crate::state::PasteConfirm {
+        text: "echo hello".into(),
+        session_id: "s1".into(),
+    });
+    assert!(app.overlay_owns_keyboard());
+    app.paste_confirm = None;
+
+    app.modal = crate::state::ModalKind::Settings;
+    assert!(app.overlay_owns_keyboard());
+    app.modal = crate::state::ModalKind::None;
+
+    app.confirm = Some(crate::state::ConfirmRequest {
+        title: "Confirm".into(),
+        message: "Delete?".into(),
+        confirm_text: "OK".into(),
+        cancel_text: "Cancel".into(),
+        action: crate::state::ConfirmAction::DeleteHost("h1".into()),
+    });
+    assert!(app.overlay_owns_keyboard());
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
 fn path_helpers() {
     assert_eq!(remote_fs::join_path("/a", "b"), "/a/b");
     assert_eq!(remote_fs::join_path("/a/", "b"), "/a/b");

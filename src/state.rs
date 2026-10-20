@@ -442,6 +442,10 @@ pub struct TerminalUiState {
     pub dragging: bool,
     pub context_menu: Option<Pos2>,
     pub last_size: (u16, u16),
+    /// Fractional wheel delta not yet turned into a scroll line / arrow key.
+    /// Accumulating here keeps trackpads smooth instead of dropping tiny deltas
+    /// or emitting one key per frame.
+    pub wheel_accum: f32,
 }
 
 // ── Top-level app state ──────────────────────────────────────────────────────
@@ -538,6 +542,19 @@ impl AppState {
             last_probe_ms: 0.0,
             last_cwd_poll_ms: 0.0,
         }
+    }
+
+    /// True while a modal overlay owns the keyboard.
+    ///
+    /// The terminal may still hold egui focus when such an overlay opens, so
+    /// the terminal pane has to stay mute: otherwise a key that dismisses or
+    /// confirms the dialog (Enter / Escape) is also written to the shell.
+    pub fn overlay_owns_keyboard(&self) -> bool {
+        self.modal != ModalKind::None
+            || self.paste_confirm.is_some()
+            || self.login_prompt.is_some()
+            || self.confirm.is_some()
+            || self.conflict.is_some()
     }
 
     // ── Lookups ──────────────────────────────────────────────────────────────
