@@ -458,15 +458,17 @@ pub fn install_fonts(ctx: &egui::Context, mono_hint: &str, mono_size: f32) {
 
     // ── CJK ──────────────────────────────────────────────────────────────────
     let mut cjk_name: Option<String> = None;
-    // Ordered by `lineGap` first: epaint adds the whole line gap *below* the
-    // baseline, so a font with a large gap (Hiragino: 0.5 em) makes every label
-    // sit visibly above the centre of its own line box. STHeiti declares 0.03 em
-    // and therefore needs (almost) no compensation.
+    // Prefer the more refined modern faces first. PingFang is Apple's UI face;
+    // Hiragino Sans GB is the best-looking system fallback when PingFang is not
+    // installed (its 0.5 em line gap is compensated below). STHeiti is kept as a
+    // last-resort macOS fallback, not as the default.
     for (path, index) in [
         ("/System/Library/Fonts/PingFang.ttc", 0u32),
+        ("/System/Library/Fonts/Supplemental/PingFang.ttc", 0),
+        ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
+        ("/System/Library/Fonts/Supplemental/Hiragino Sans GB.ttc", 0),
         ("/System/Library/Fonts/STHeiti Medium.ttc", 0),
         ("/System/Library/Fonts/STHeiti Light.ttc", 0),
-        ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
         ("/System/Library/Fonts/Supplemental/Songti.ttc", 0),
         ("/Library/Fonts/Arial Unicode.ttf", 0),
         // Windows: Microsoft YaHei, then the older SimSun / DengXian faces.
@@ -617,11 +619,23 @@ pub fn install_visuals(ctx: &egui::Context) {
     style.spacing.item_spacing = Vec2::new(6.0, 6.0);
     style.spacing.button_padding = Vec2::new(10.0, 5.0);
     style.spacing.window_margin = egui::Margin::same(0i8);
-    style.spacing.scroll = egui::style::ScrollStyle::solid();
-    style.spacing.scroll.bar_width = 6.0;
-    style.spacing.scroll.bar_inner_margin = 2.0;
-    style.spacing.scroll.bar_outer_margin = 0.0;
-    style.spacing.scroll.floating = false;
+    // Slim floating scrollbars: a translucent handle that is visible at rest,
+    // with no opaque dark track behind it. `floating_allocated_width` keeps a
+    // little breathing room so the handle never sits on top of field borders.
+    let mut scroll = egui::style::ScrollStyle::floating();
+    scroll.bar_width = 6.0;
+    scroll.floating_width = 3.0;
+    scroll.floating_allocated_width = 4.0;
+    scroll.handle_min_length = 24.0;
+    scroll.bar_inner_margin = 2.0;
+    scroll.bar_outer_margin = 0.0;
+    scroll.dormant_handle_opacity = 0.4;
+    scroll.active_handle_opacity = 0.6;
+    scroll.interact_handle_opacity = 0.95;
+    scroll.dormant_background_opacity = 0.0;
+    scroll.active_background_opacity = 0.0;
+    scroll.interact_background_opacity = 0.14;
+    style.spacing.scroll = scroll;
 
     ctx.set_global_style(style);
 }

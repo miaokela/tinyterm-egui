@@ -204,7 +204,17 @@ pub fn apply_confirm(app: &mut AppState, action: ConfirmAction, _accepted: bool)
             overwrite,
         ),
         ConfirmAction::DeleteHost(id) => app.delete_bookmark(&id),
-        ConfirmAction::DeleteCredential(id) => app.delete_profile(&id),
+        ConfirmAction::DeleteCredential(id) => {
+            app.delete_profile(&id);
+            // If the deleted credential was selected in the Host form, drop the
+            // dangling selection and go back to the first account page.
+            if let Some(form) = app.host_form.as_mut() {
+                if form.profile_id == id {
+                    form.profile_id.clear();
+                    form.cred_page = 0;
+                }
+            }
+        }
         ConfirmAction::TrustHostKey(prompt) => {
             app.trust_host_key(&prompt);
             let pending = app.pending_trust.take();

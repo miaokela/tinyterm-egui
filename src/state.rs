@@ -345,6 +345,8 @@ pub struct HostFormState {
     pub password: String,
     pub error: Option<String>,
     pub saving: bool,
+    /// Current page (three cards) in the Host form's account grid.
+    pub cred_page: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -498,6 +500,10 @@ pub struct AppState {
     /// the queue row disappear.
     pub pending_cancel_done: Vec<(String, f64)>,
     pub host_search: String,
+    /// Zero-based page of the Hosts modal list.
+    pub hosts_page: usize,
+    /// First-run callout pointing at the host-management button.
+    pub host_hint_visible: bool,
 
     /// Stars for the cosmic background, regenerated on resize.
     pub last_probe_ms: f64,
@@ -539,6 +545,8 @@ impl AppState {
             local_load_queue: Vec::new(),
             pending_cancel_done: Vec::new(),
             host_search: String::new(),
+            hosts_page: 0,
+            host_hint_visible: true,
             last_probe_ms: 0.0,
             last_cwd_poll_ms: 0.0,
         }

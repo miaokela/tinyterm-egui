@@ -76,7 +76,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, rect: Rect) {
             Vec2::new(content.width() - 30.0, 28.0),
         )
     };
-    let r = ui.interact(btn_rect, ui.id().with("hosts-modal-btn"), Sense::click());
+    let host_count = app.bookmarks.len();
+    let r = ui
+        .interact(btn_rect, ui.id().with("hosts-modal-btn"), Sense::click())
+        .on_hover_text(format!("已配置 {host_count} 台主机"));
     let painter = ui.painter();
     if r.hovered() {
         painter.rect_filled(
@@ -105,6 +108,22 @@ pub fn show(ui: &mut Ui, app: &mut AppState, rect: Rect) {
     };
     if collapsed {
         widgets::gear(painter, btn_rect.center(), 7.0, fg);
+        if host_count > 0 {
+            let label = if host_count > 9 {
+                "9+".to_string()
+            } else {
+                host_count.to_string()
+            };
+            let badge_center = Pos2::new(btn_rect.right() - 2.0, btn_rect.top() + 2.0);
+            painter.circle_filled(badge_center, 7.0, theme::ACCENT);
+            painter.text(
+                badge_center,
+                Align2::CENTER_CENTER,
+                label,
+                theme::font_sans(8.5),
+                Color32::WHITE,
+            );
+        }
     } else {
         widgets::gear(painter, Pos2::new(btn_rect.left() + 10.0 + 6.5, btn_rect.center().y), 6.5, fg);
         painter.text(
@@ -114,8 +133,44 @@ pub fn show(ui: &mut Ui, app: &mut AppState, rect: Rect) {
             theme::f_xs(),
             fg,
         );
+
+        // Configured-host counter, right-aligned inside the button.
+        let count_text = format!("{host_count} 台");
+        let count_font = theme::f_xs();
+        let count_w = painter
+            .layout_no_wrap(count_text.clone(), count_font.clone(), Color32::WHITE)
+            .size()
+            .x;
+        let pill = Rect::from_min_size(
+            Pos2::new(
+                btn_rect.right() - 8.0 - (count_w + 14.0),
+                btn_rect.center().y - 9.0,
+            ),
+            Vec2::new(count_w + 14.0, 18.0),
+        );
+        painter.rect_filled(
+            pill,
+            CornerRadius::same(9),
+            if r.hovered() {
+                Color32::from_rgba_premultiplied(41, 82, 133, 140)
+            } else {
+                Color32::from_rgba_premultiplied(15, 35, 65, 90)
+            },
+        );
+        painter.text(
+            pill.center(),
+            Align2::CENTER_CENTER,
+            count_text,
+            count_font,
+            if r.hovered() {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_SECONDARY
+            },
+        );
     }
     if r.clicked() {
+        app.host_hint_visible = false;
         app.modal = crate::state::ModalKind::Hosts;
     }
 
@@ -162,6 +217,143 @@ pub fn show(ui: &mut Ui, app: &mut AppState, rect: Rect) {
     );
     if r.clicked() {
         app.sidebar_collapsed = !collapsed;
+    }
+
+    if !collapsed {
+        host_hint(ui, app, content, btn_rect, host_count);
+    }
+}
+
+/// First-run speech bubble above the host-management button. It disappears
+/// after the user opens the Hosts modal through the button or the bubble.
+fn host_hint(ui: &mut Ui, app: &mut AppState, content: Rect, anchor: Rect, host_count: usize) {
+    if !app.host_hint_visible {
+        return;
+    }
+
+    let text = if host_count == 0 {
+        "这里配置主机"
+    } else {
+        "你的主机在这里"
+    };
+    let font = theme::f_sm();
+    let painter = ui.painter().clone();
+    let max_w = (content.width() - 4.0).max(48.0);
+    let icon_size = 13.0;
+    let gap = 7.0;
+    let pad_x = 12.0;
+    let label = theme::truncate(
+        &painter,
+        text,
+        &font,
+        (max_w - pad_x * 2.0 - icon_size - gap).max(20.0),
+    );
+    let text_w = painter
+        .layout_no_wrap(label.clone(), font.clone(), Color32::WHITE)
+        .size()
+        .x;
+    let w = (text_w + icon_size + gap + pad_x * 2.0).min(max_w);
+    let h = 34.0;
+    let cx = anchor.center().x.clamp(
+        content.left() + w * 0.5 + 2.0,
+        content.right() - w * 0.5 - 2.0,
+    );
+    let bubble = Rect::from_center_size(
+        Pos2::new(cx, anchor.top() - 13.0 - h * 0.5),
+        Vec2::new(w, h),
+    );
+
+    let response = ui
+        .interact(bubble, ui.id().with("hosts-hint"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let hovered = response.hovered();
+    let (fill, border_color) = if hovered {
+        (
+            Color32::from_rgba_premultiplied(26, 66, 126, 226),
+            Color32::from_rgba_unmultiplied(140, 200, 255, 190),
+        )
+    } else {
+        (
+            Color32::from_rgba_premultiplied(18, 48, 96, 210),
+            Color32::from_rgba_unmultiplied(106, 181, 255, 130),
+        )
+    };
+    let border = Stroke::new(1.0, border_color);
+    let radius = 10;
+
+    // Soft glow + translucent glass fill + a thin top sheen. The fill stays
+    // partially transparent so the sidebar shows through instead of reading as
+    // a flat, solid sticker.
+    theme::glow(
+        &painter,
+        bubble,
+        radius,
+        theme::ACCENT,
+        if hovered { 0.5 } else { 0.3 },
+    );
+    painter.rect_filled(bubble, CornerRadius::same(radius), fill);
+    painter.rect_stroke(
+        bubble,
+        CornerRadius::same(radius),
+        border,
+        StrokeKind::Inside,
+    );
+    painter.line_segment(
+        [
+            Pos2::new(bubble.left() + 12.0, bubble.top() + 1.0),
+            Pos2::new(bubble.right() - 12.0, bubble.top() + 1.0),
+        ],
+        Stroke::new(
+            1.0,
+            Color32::from_rgba_unmultiplied(190, 225, 255, if hovered { 85 } else { 55 }),
+        ),
+    );
+
+    // The tail needs an opaque fill: a translucent one lets the bubble's bottom
+    // border and glow show through as a faint horizontal line at the base. The
+    // opaque colour approximates the glass fill composited over the sidebar.
+    let tail_color = if hovered {
+        Color32::from_rgb(27, 70, 133)
+    } else {
+        Color32::from_rgb(20, 53, 106)
+    };
+    let bottom = bubble.bottom();
+    let tail_fill = vec![
+        Pos2::new(cx - 7.0, bottom - 1.0),
+        Pos2::new(cx + 7.0, bottom - 1.0),
+        Pos2::new(cx + 7.0, bottom),
+        Pos2::new(cx, bottom + 7.0),
+        Pos2::new(cx - 7.0, bottom),
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        tail_fill,
+        tail_color,
+        Stroke::NONE,
+    ));
+    let tip = Pos2::new(cx, bottom + 7.0);
+    painter.line_segment([Pos2::new(cx - 7.0, bottom), tip], border);
+    painter.line_segment([Pos2::new(cx + 7.0, bottom), tip], border);
+
+    // Small terminal glyph + label, centred as one group.
+    let content_left = bubble.left() + pad_x;
+    widgets::icon(
+        &painter,
+        Pos2::new(content_left + icon_size * 0.5, bubble.center().y),
+        icon_size,
+        crate::icons::TERMINAL,
+        Color32::from_rgba_unmultiplied(150, 200, 255, 230),
+    );
+    painter.text(
+        Pos2::new(content_left + icon_size + gap, bubble.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        font,
+        theme::TEXT_PRIMARY,
+    );
+
+    if response.clicked() {
+        app.host_hint_visible = false;
+        app.modal = crate::state::ModalKind::Hosts;
     }
 }
 
@@ -334,6 +526,7 @@ fn host_tab_row(ui: &mut Ui, app: &mut AppState, tab_id: &str, index: usize, col
     }
 
     if response.clicked() {
+        app.host_hint_visible = false;
         app.set_active_host_tab(tab_id);
     }
 }

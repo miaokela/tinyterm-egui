@@ -11,6 +11,12 @@ const SHELL_HEIGHT: f32 = 480.0;
 const FORM_WIDTH: f32 = 500.0;
 const FORM_HEIGHT: f32 = 560.0;
 const ROW_HEIGHT: f32 = 56.0;
+const ROW_GAP: f32 = 6.0;
+const PAGE_FOOTER_HEIGHT: f32 = 34.0;
+const CRED_COLUMNS: usize = 3;
+const CRED_CARD_HEIGHT: f32 = 46.0;
+const CRED_GAP: f32 = 6.0;
+const CRED_PAGER_HEIGHT: f32 = 20.0;
 
 pub fn show(ui: &mut Ui, app: &mut AppState) {
     if app.modal != ModalKind::Hosts && app.modal != ModalKind::HostForm {
@@ -86,6 +92,7 @@ fn list(ui: &mut Ui, app: &mut AppState, screen: Rect) {
         Vec2::new(width - 16.0 - 60.0, 30.0),
     );
     let mut search_ui = ui.new_child(egui::UiBuilder::new().max_rect(search_rect));
+    let previous_search = app.host_search.clone();
     widgets::text_input_ext(
         &mut search_ui,
         &mut app.host_search,
@@ -94,6 +101,10 @@ fn list(ui: &mut Ui, app: &mut AppState, screen: Rect) {
         false,
         Some(crate::icons::MAGNIFYING_GLASS),
     );
+    if app.host_search != previous_search {
+        // A new filter starts from the first page.
+        app.hosts_page = 0;
+    }
 
     // Add orb
     let add_rect = Rect::from_center_size(
@@ -118,10 +129,17 @@ fn list(ui: &mut Ui, app: &mut AppState, screen: Rect) {
         app.modal = ModalKind::HostForm;
     }
 
-    // ── List ─────────────────────────────────────────────────────────────────
+    // ── List + pagination ────────────────────────────────────────────────────
+    let footer = Rect::from_min_size(
+        Pos2::new(
+            rect.left() + 12.0,
+            rect.bottom() - 12.0 - PAGE_FOOTER_HEIGHT,
+        ),
+        Vec2::new(width - 24.0, PAGE_FOOTER_HEIGHT),
+    );
     let list_rect = Rect::from_min_max(
         Pos2::new(rect.left() + 12.0, toolbar.bottom()),
-        Pos2::new(rect.right() - 12.0, rect.bottom() - 12.0),
+        Pos2::new(rect.right() - 12.0, footer.top() - 4.0),
     );
     let filter = app.host_search.to_lowercase();
     let hosts: Vec<Bookmark> = app
@@ -150,16 +168,85 @@ fn list(ui: &mut Ui, app: &mut AppState, screen: Rect) {
         return;
     }
 
-    let mut scroll = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
-    egui::ScrollArea::vertical()
-        .id_salt("hosts-list")
-        .auto_shrink([false, false])
-        .show(&mut scroll, |ui| {
-            ui.spacing_mut().item_spacing.y = 6.0;
-            for host in &hosts {
-                host_row(ui, app, host);
-            }
-        });
+    let row_pitch = ROW_HEIGHT + ROW_GAP;
+    let per_page = (((list_rect.height() + ROW_GAP) / row_pitch).floor() as usize).max(1);
+    let total_pages = hosts.len().div_ceil(per_page).max(1);
+    let current = app.hosts_page.min(total_pages - 1);
+    app.hosts_page = current;
+    let start = current * per_page;
+    let page_hosts = &hosts[start..(start + per_page).min(hosts.len())];
+
+    let mut rows_ui = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
+    rows_ui.spacing_mut().item_spacing.y = ROW_GAP;
+    for host in page_hosts {
+        host_row(&mut rows_ui, app, host);
+    }
+
+    // Footer: count + page position + prev/next.
+    painter.line_segment(
+        [
+            Pos2::new(footer.left(), footer.top() + 0.5),
+            Pos2::new(footer.right(), footer.top() + 0.5),
+        ],
+        Stroke::new(1.0, Color32::from_rgba_premultiplied(17, 40, 77, 51)),
+    );
+    painter.text(
+        Pos2::new(footer.left() + 4.0, footer.center().y),
+        Align2::LEFT_CENTER,
+        format!(
+            "共 {} 台 · 第 {} / {} 页",
+            hosts.len(),
+            current + 1,
+            total_pages
+        ),
+        theme::f_xs(),
+        theme::TEXT_MUTED,
+    );
+
+    if total_pages > 1 {
+        let next_rect = Rect::from_center_size(
+            Pos2::new(footer.right() - 12.0, footer.center().y),
+            Vec2::splat(22.0),
+        );
+        let prev_rect = Rect::from_center_size(
+            Pos2::new(footer.right() - 38.0, footer.center().y),
+            Vec2::splat(22.0),
+        );
+        let r_next = ui.interact(next_rect, ui.id().with("hosts-page-next"), Sense::click());
+        let r_prev = ui.interact(prev_rect, ui.id().with("hosts-page-prev"), Sense::click());
+        widgets::chevron(
+            &painter,
+            prev_rect.center(),
+            9.0,
+            true,
+            if current == 0 {
+                theme::TEXT_MUTED
+            } else if r_prev.hovered() {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_SECONDARY
+            },
+        );
+        widgets::chevron(
+            &painter,
+            next_rect.center(),
+            9.0,
+            false,
+            if current + 1 >= total_pages {
+                theme::TEXT_MUTED
+            } else if r_next.hovered() {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_SECONDARY
+            },
+        );
+        if r_prev.clicked() && current > 0 {
+            app.hosts_page = current - 1;
+        }
+        if r_next.clicked() && current + 1 < total_pages {
+            app.hosts_page = current + 1;
+        }
+    }
 }
 
 fn host_row(ui: &mut Ui, app: &mut AppState, host: &Bookmark) {
@@ -211,41 +298,55 @@ fn host_row(ui: &mut Ui, app: &mut AppState, host: &Bookmark) {
     );
 
     // Name + meta
+    let name_left = rect.left() + 40.0;
+    // The credential badge owns a fixed column; the name must stop before it
+    // instead of running underneath it when the host title is long.
+    let badge_x = rect.left() + 180.0;
+    let name_right = badge_x - 12.0;
     painter.text(
-        Pos2::new(rect.left() + 40.0, rect.center().y - 9.0),
+        Pos2::new(name_left, rect.center().y - 9.0),
         Align2::LEFT_CENTER,
         theme::truncate(
             painter,
             &host.display_name(),
             &theme::f_sm(),
-            rect.width() - 240.0,
+            (name_right - name_left).max(20.0),
         ),
         theme::f_sm(),
         theme::TEXT_PRIMARY,
     );
+    let addr = format!("{}:{}", host.host, host.port);
     painter.text(
-        Pos2::new(rect.left() + 40.0, rect.center().y + 10.0),
+        Pos2::new(name_left, rect.center().y + 10.0),
         Align2::LEFT_CENTER,
-        format!("{}:{}", host.host, host.port),
+        theme::truncate(
+            painter,
+            &addr,
+            &theme::font_mono(theme::TEXT_XS - 1.0),
+            (name_right - name_left).max(20.0),
+        ),
         theme::font_mono(theme::TEXT_XS - 1.0),
         theme::TEXT_MUTED,
     );
 
-    // Credential badge
+    // Credential badge. Cap it before the action buttons so a long credential
+    // title cannot overlap connect/edit/duplicate/delete either.
     let cred_text = match app.profile(host.profile_id.as_deref().unwrap_or("")) {
         Some(p) => format!("{} · {}", if p.is_key() { "key" } else { "pwd" }, p.title),
         None if !host.username.is_empty() => format!("{} · 手动输入", host.username),
         None => "连接时输入".to_string(),
     };
-    let badge_x = rect.left() + 180.0;
-    if badge_x < rect.right() - 180.0 {
+    let badge_max_w = (rect.right() - 144.0 - badge_x).max(0.0);
+    if badge_max_w >= 40.0 {
+        let badge_font = theme::font_sans(theme::TEXT_XS - 1.0);
+        let badge_text = theme::truncate(painter, &cred_text, &badge_font, badge_max_w - 16.0);
         let text_w = painter
-            .layout_no_wrap(cred_text.clone(), theme::font_sans(theme::TEXT_XS - 1.0), Color32::WHITE)
+            .layout_no_wrap(badge_text.clone(), badge_font.clone(), Color32::WHITE)
             .size()
             .x;
         let badge = Rect::from_min_size(
             Pos2::new(badge_x, rect.center().y - 9.0),
-            Vec2::new(text_w + 16.0, 18.0),
+            Vec2::new((text_w + 16.0).min(badge_max_w), 18.0),
         );
         painter.rect_filled(
             badge,
@@ -255,8 +356,8 @@ fn host_row(ui: &mut Ui, app: &mut AppState, host: &Bookmark) {
         painter.text(
             badge.center(),
             Align2::CENTER_CENTER,
-            cred_text,
-            theme::font_sans(theme::TEXT_XS - 1.0),
+            badge_text,
+            badge_font,
             theme::TEXT_SECONDARY,
         );
     }
@@ -340,6 +441,7 @@ fn open_form(app: &mut AppState, host: &Bookmark, duplicate: bool) {
         password: String::new(),
         error: None,
         saving: false,
+        cred_page: 0,
     });
     app.modal = ModalKind::HostForm;
 }
@@ -408,11 +510,16 @@ fn form(ui: &mut Ui, app: &mut AppState, screen: Rect) {
     let mut scroll = ui.new_child(egui::UiBuilder::new().max_rect(body));
     egui::ScrollArea::vertical()
         .id_salt("host-form")
+        .max_height(body.height())
+        // The form itself should not grow a visible scrollbar; it can still be
+        // wheel-scrolled when the content is taller than the shell.
+        .scroll_bar_visibility(egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden)
+        .scroll_source(egui::containers::scroll_area::ScrollSource::ALL)
         .auto_shrink([false, false])
         .show(&mut scroll, |ui| {
-            ui.set_width(body.width());
+            let full = ui.available_width();
+            ui.set_width(full);
             widgets::labelled(ui, "名称（可选）", false);
-            let full = body.width();
             widgets::text_input(ui, &mut form.title, "My Production Server", full, false);
 
             widgets::labelled(ui, "主机地址", true);
@@ -438,7 +545,10 @@ fn form(ui: &mut Ui, app: &mut AppState, screen: Rect) {
                 });
                 app.modal = ModalKind::CredentialForm;
             }
-            let creds = app.profiles.clone();
+            let mut creds = app.profiles.clone();
+            // Keep the host's current account first so it is always visible on
+            // the first page, even when the list is filtered/paged.
+            creds.sort_by_key(|c| c.id.as_str() != form.profile_id.as_str());
             if creds.is_empty() {
                 ui.label(
                     egui::RichText::new("暂无账号，连接时将提示输入用户名和密码")
@@ -446,79 +556,308 @@ fn form(ui: &mut Ui, app: &mut AppState, screen: Rect) {
                         .color(theme::TEXT_MUTED),
                 );
             } else {
-                for cred in &creds {
-                    let selected = form.profile_id == cred.id;
-                    let (r, resp) = ui.allocate_exact_size(
-                        Vec2::new(full, 30.0),
+                // Three cards per row, one row per page. Navigation is only
+                // left/right; the pager text and controls sit on the right.
+                let total_pages = creds.len().div_ceil(CRED_COLUMNS).max(1);
+                form.cred_page = form.cred_page.min(total_pages - 1);
+                let page = form.cred_page;
+                let start_idx = page * CRED_COLUMNS;
+                let end_idx = (start_idx + CRED_COLUMNS).min(creds.len());
+                let page_creds = &creds[start_idx..end_idx];
+                let grid_h = CRED_CARD_HEIGHT;
+
+                ui.allocate_ui_with_layout(
+                    Vec2::new(full, grid_h),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        let avail = ui.available_width();
+                        ui.set_width(avail);
+                        ui.spacing_mut().item_spacing = Vec2::new(CRED_GAP, CRED_GAP);
+                        let card_w = ((avail - CRED_GAP * 2.0) / CRED_COLUMNS as f32)
+                            .floor()
+                            .max(40.0);
+
+                        ui.horizontal_wrapped(|ui| {
+                            for cred in page_creds {
+                                let selected = form.profile_id == cred.id;
+                                let (r, resp) = ui.allocate_exact_size(
+                                    Vec2::new(card_w, CRED_CARD_HEIGHT),
+                                    Sense::click(),
+                                );
+                                let resp =
+                                    resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                                let painter = ui.painter();
+                                let radius = CornerRadius::same(theme::RADIUS_SM);
+                                painter.rect_filled(
+                                    r,
+                                    radius,
+                                    if selected {
+                                        widgets::tint(theme::ACCENT, 0.26)
+                                    } else if resp.hovered() {
+                                        widgets::tint(theme::ACCENT, 0.12)
+                                    } else {
+                                        Color32::from_rgba_premultiplied(11, 24, 46, 60)
+                                    },
+                                );
+                                if selected {
+                                    painter.rect_stroke(
+                                        r,
+                                        radius,
+                                        Stroke::new(
+                                            1.0,
+                                            widgets::tint(theme::ACCENT_LIGHT, 0.8),
+                                        ),
+                                        StrokeKind::Inside,
+                                    );
+                                    let bar = Rect::from_min_size(
+                                        Pos2::new(r.left(), r.top() + 4.0),
+                                        Vec2::new(3.0, r.height() - 8.0),
+                                    );
+                                    theme::glow(painter, bar, 2, theme::ACCENT, 0.9);
+                                    painter.rect_filled(
+                                        bar,
+                                        CornerRadius {
+                                            nw: 0,
+                                            sw: 0,
+                                            ne: 2,
+                                            se: 2,
+                                        },
+                                        theme::ACCENT_LIGHT,
+                                    );
+                                }
+
+                                let edit_rect = Rect::from_center_size(
+                                    Pos2::new(r.right() - 13.0, r.top() + 12.0),
+                                    Vec2::splat(18.0),
+                                );
+                                let r_edit = ui
+                                    .interact(
+                                        edit_rect,
+                                        ui.id().with(("host-form-cred-edit", &cred.id)),
+                                        Sense::click(),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if r_edit.hovered() {
+                                    painter.rect_filled(
+                                        edit_rect,
+                                        CornerRadius::same(6),
+                                        widgets::tint(theme::ACCENT, 0.16),
+                                    );
+                                }
+                                widgets::icon(
+                                    painter,
+                                    edit_rect.center(),
+                                    11.0,
+                                    crate::icons::PENCIL_SIMPLE,
+                                    if r_edit.hovered() {
+                                        theme::TEXT_PRIMARY
+                                    } else {
+                                        theme::TEXT_MUTED
+                                    },
+                                );
+
+                                let del_rect = Rect::from_center_size(
+                                    Pos2::new(r.right() - 32.0, r.top() + 12.0),
+                                    Vec2::splat(18.0),
+                                );
+                                let r_del = ui
+                                    .interact(
+                                        del_rect,
+                                        ui.id().with(("host-form-cred-del", &cred.id)),
+                                        Sense::click(),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if r_del.hovered() {
+                                    painter.rect_filled(
+                                        del_rect,
+                                        CornerRadius::same(6),
+                                        widgets::tint(theme::ERROR, 0.16),
+                                    );
+                                }
+                                widgets::icon(
+                                    painter,
+                                    del_rect.center(),
+                                    11.0,
+                                    crate::icons::TRASH,
+                                    if r_del.hovered() {
+                                        theme::ERROR
+                                    } else {
+                                        theme::TEXT_MUTED
+                                    },
+                                );
+
+                                painter.text(
+                                    Pos2::new(r.left() + 10.0, r.top() + 13.0),
+                                    Align2::LEFT_CENTER,
+                                    if cred.is_key() { "KEY" } else { "PWD" },
+                                    theme::font_sans(theme::TEXT_XS - 2.0),
+                                    if selected {
+                                        theme::ACCENT_HOVER
+                                    } else {
+                                        theme::ACCENT_LIGHT
+                                    },
+                                );
+                                let title_x = r.left() + 44.0;
+                                painter.text(
+                                    Pos2::new(title_x, r.top() + 13.0),
+                                    Align2::LEFT_CENTER,
+                                    theme::truncate(
+                                        painter,
+                                        &cred.title,
+                                        &theme::f_xs(),
+                                        (r.right() - 44.0 - title_x).max(10.0),
+                                    ),
+                                    theme::f_xs(),
+                                    if selected {
+                                        theme::TEXT_PRIMARY
+                                    } else {
+                                        theme::TEXT_SECONDARY
+                                    },
+                                );
+                                painter.text(
+                                    Pos2::new(r.left() + 10.0, r.bottom() - 13.0),
+                                    Align2::LEFT_CENTER,
+                                    theme::truncate(
+                                        painter,
+                                        &cred.username,
+                                        &theme::font_mono(theme::TEXT_XS - 1.0),
+                                        (r.width() - 20.0).max(10.0),
+                                    ),
+                                    theme::font_mono(theme::TEXT_XS - 1.0),
+                                    if selected {
+                                        theme::TEXT_SECONDARY
+                                    } else {
+                                        theme::TEXT_MUTED
+                                    },
+                                );
+
+                                let delete_clicked = r_del.clicked()
+                                    || (resp.clicked()
+                                        && ui.input(|i| {
+                                            i.pointer
+                                                .interact_pos()
+                                                .is_some_and(|p| del_rect.contains(p))
+                                        }));
+                                let edit_clicked = r_edit.clicked()
+                                    || (resp.clicked()
+                                        && ui.input(|i| {
+                                            i.pointer
+                                                .interact_pos()
+                                                .is_some_and(|p| edit_rect.contains(p))
+                                        }));
+                                if delete_clicked {
+                                    app.confirm = Some(ConfirmRequest {
+                                        title: "删除账号".into(),
+                                        message: format!("确认删除账号「{}」？", cred.title),
+                                        confirm_text: "删除".into(),
+                                        cancel_text: "取消".into(),
+                                        action: ConfirmAction::DeleteCredential(cred.id.clone()),
+                                    });
+                                } else if edit_clicked {
+                                    app.credential_form = Some(
+                                        crate::state::CredentialFormState {
+                                            editing_id: Some(cred.id.clone()),
+                                            title: cred.title.clone(),
+                                            username: cred.username.clone(),
+                                            auth_type: cred.auth_type.clone(),
+                                            password: String::new(),
+                                            private_key: String::new(),
+                                            passphrase: String::new(),
+                                            show_password: false,
+                                            show_passphrase: false,
+                                            error: None,
+                                            saving: false,
+                                            from_host_form: true,
+                                        },
+                                    );
+                                    app.modal = ModalKind::CredentialForm;
+                                } else if resp.clicked() {
+                                    form.profile_id = if selected {
+                                        String::new()
+                                    } else {
+                                        cred.id.clone()
+                                    };
+                                    form.cred_page = 0;
+                                }
+                            }
+                        });
+                    },
+                );
+
+                // Right-aligned pager: text + ◀ ▶ controls.
+                let (pager_rect, _) = ui.allocate_exact_size(
+                    Vec2::new(full, CRED_PAGER_HEIGHT),
+                    Sense::hover(),
+                );
+                let painter = ui.painter();
+                painter.line_segment(
+                    [
+                        Pos2::new(pager_rect.left() + 4.0, pager_rect.top() + 0.5),
+                        Pos2::new(pager_rect.right() - 4.0, pager_rect.top() + 0.5),
+                    ],
+                    Stroke::new(1.0, Color32::from_rgba_premultiplied(17, 40, 77, 51)),
+                );
+
+                let btn = 16.0;
+                let cy = pager_rect.center().y;
+                let next_rect = Rect::from_center_size(
+                    Pos2::new(pager_rect.right() - 10.0, cy),
+                    Vec2::splat(btn),
+                );
+                let prev_rect = Rect::from_center_size(
+                    Pos2::new(pager_rect.right() - 30.0, cy),
+                    Vec2::splat(btn),
+                );
+                painter.text(
+                    Pos2::new(pager_rect.right() - 50.0, cy),
+                    Align2::RIGHT_CENTER,
+                    format!("第 {} / {} 页", page + 1, total_pages),
+                    theme::font_sans(10.0),
+                    theme::TEXT_MUTED,
+                );
+
+                let can_prev = page > 0;
+                let can_next = page + 1 < total_pages;
+                let r_prev = ui
+                    .interact(
+                        prev_rect,
+                        ui.id().with("host-form-cred-page-prev"),
                         Sense::click(),
                     );
-                    let painter = ui.painter();
-                    let radius = CornerRadius::same(theme::RADIUS_XS);
-                    painter.rect_filled(
-                        r,
-                        radius,
-                        if selected {
-                            widgets::tint(theme::ACCENT, 0.26)
-                        } else if resp.hovered() {
-                            widgets::tint(theme::ACCENT, 0.12)
-                        } else {
-                            Color32::from_rgba_premultiplied(11, 24, 46, 60)
-                        },
+                let r_next = ui
+                    .interact(
+                        next_rect,
+                        ui.id().with("host-form-cred-page-next"),
+                        Sense::click(),
                     );
-                    if selected {
-                        // The sidebar's "active" language: accent rim + a glowing
-                        // bar on the leading edge, so the chosen row is obvious at
-                        // a glance and the rest of the list stays dim.
-                        painter.rect_stroke(
-                            r,
-                            radius,
-                            Stroke::new(1.0, widgets::tint(theme::ACCENT_LIGHT, 0.8)),
-                            StrokeKind::Inside,
-                        );
-                        let bar = Rect::from_min_size(
-                            Pos2::new(r.left(), r.top() + 5.0),
-                            Vec2::new(3.0, r.height() - 10.0),
-                        );
-                        theme::glow(painter, bar, 2, theme::ACCENT, 0.9);
-                        painter.rect_filled(
-                            bar,
-                            CornerRadius {
-                                nw: 0,
-                                sw: 0,
-                                ne: 2,
-                                se: 2,
-                            },
-                            theme::ACCENT_LIGHT,
-                        );
+                let arrow_color = |enabled: bool, hovered: bool| {
+                    if !enabled {
+                        theme::TEXT_MUTED.gamma_multiply(0.55)
+                    } else if hovered {
+                        theme::TEXT_PRIMARY
+                    } else {
+                        theme::TEXT_SECONDARY
                     }
-                    painter.text(
-                        Pos2::new(r.left() + 12.0, r.center().y),
-                        Align2::LEFT_CENTER,
-                        if cred.is_key() { "KEY" } else { "PWD" },
-                        theme::font_sans(theme::TEXT_XS - 2.0),
-                        if selected { theme::ACCENT_HOVER } else { theme::ACCENT_LIGHT },
-                    );
-                    painter.text(
-                        Pos2::new(r.left() + 52.0, r.center().y),
-                        Align2::LEFT_CENTER,
-                        theme::truncate(painter, &cred.title, &theme::f_xs(), full * 0.4),
-                        theme::f_xs(),
-                        if selected { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY },
-                    );
-                    painter.text(
-                        Pos2::new(r.right() - 12.0, r.center().y),
-                        Align2::RIGHT_CENTER,
-                        &cred.username,
-                        theme::font_mono(theme::TEXT_XS - 1.0),
-                        if selected { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED },
-                    );
-                    if resp.clicked() {
-                        form.profile_id = if selected {
-                            String::new()
-                        } else {
-                            cred.id.clone()
-                        };
-                    }
+                };
+                widgets::chevron(
+                    painter,
+                    prev_rect.center(),
+                    7.0,
+                    true,
+                    arrow_color(can_prev, r_prev.hovered()),
+                );
+                widgets::chevron(
+                    painter,
+                    next_rect.center(),
+                    7.0,
+                    false,
+                    arrow_color(can_next, r_next.hovered()),
+                );
+                if r_prev.clicked() && can_prev {
+                    form.cred_page = page - 1;
+                }
+                if r_next.clicked() && can_next {
+                    form.cred_page = page + 1;
                 }
             }
             if let Some(cred) = creds.iter().find(|c| c.id == form.profile_id) {
