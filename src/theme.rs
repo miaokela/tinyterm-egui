@@ -1,7 +1,10 @@
-//! Cosmic / glassmorphism theme — a 1:1 port of TinyTerm's `global.css` design tokens.
+//! Cosmic / glassmorphism theme — the chrome is a 1:1 port of TinyTerm's
+//! `global.css` design tokens.
 //!
 //! Every colour, radius and text size below is copied from the web client's
-//! `:root` custom properties so the egui build is visually identical.
+//! `:root` custom properties so the egui build is visually identical, with one
+//! exception: the terminal's ANSI palette is tuned for the dark desktop
+//! background instead of the stock xterm.js theme (see [`ANSI`]).
 
 use egui::{
     Color32, CornerRadius, FontFamily, FontId, Pos2, Rect, Stroke, StrokeKind, TextStyle,
@@ -60,33 +63,46 @@ pub const CONNECTING: Color32 = Color32::from_rgb(0x7c, 0xc9, 0xff);
 /// `--color-terminal-text: #d7e3f0`
 pub const TERMINAL_TEXT: Color32 = Color32::from_rgb(0xd7, 0xe3, 0xf0);
 
-// ── Terminal ANSI palette (from `TERMINAL_THEME` in TerminalView.tsx) ────────
+// ── Terminal ANSI palette ────────────────────────────────────────────────────
+//
+// Tuned for the near-black navy `TERMINAL_BG` instead of being copied from a
+// stock theme: the normal half stays soft enough for long log tails, while the
+// bright half is what `ls`, `git` and friends reach for when they want
+// emphasis. Keep the two halves one step apart in lightness so bold text never
+// looks like a different colour.
 
 pub const ANSI: [Color32; 16] = [
-    Color32::from_rgb(0x16, 0x20, 0x2b), // black
-    Color32::from_rgb(0xef, 0x6b, 0x73), // red
-    Color32::from_rgb(0x7c, 0xcf, 0x92), // green
-    Color32::from_rgb(0xe7, 0xc3, 0x6f), // yellow
-    Color32::from_rgb(0x73, 0xa7, 0xff), // blue
-    Color32::from_rgb(0xc7, 0x92, 0xea), // magenta
-    Color32::from_rgb(0x66, 0xc7, 0xd1), // cyan
-    Color32::from_rgb(0xb7, 0xc4, 0xcf), // white
-    Color32::from_rgb(0x55, 0x60, 0x6d), // bright black
-    Color32::from_rgb(0xff, 0x8b, 0x94), // bright red
-    Color32::from_rgb(0x99, 0xe6, 0xa8), // bright green
-    Color32::from_rgb(0xff, 0xd9, 0x8a), // bright yellow
-    Color32::from_rgb(0x94, 0xc2, 0xff), // bright blue
-    Color32::from_rgb(0xdd, 0xb3, 0xff), // bright magenta
-    Color32::from_rgb(0x8b, 0xe0, 0xe8), // bright cyan
-    Color32::from_rgb(0xd7, 0xe1, 0xea), // bright white
+    Color32::from_rgb(0x33, 0x46, 0x5e), // black (slate that still reads on navy)
+    Color32::from_rgb(0xff, 0x6b, 0x82), // red
+    Color32::from_rgb(0x83, 0xe0, 0x8e), // green
+    Color32::from_rgb(0xf3, 0xcf, 0x6e), // yellow
+    Color32::from_rgb(0x79, 0xa6, 0xff), // blue
+    Color32::from_rgb(0xc9, 0xa6, 0xff), // magenta
+    Color32::from_rgb(0x66, 0xd9, 0xe8), // cyan
+    Color32::from_rgb(0xc9, 0xd5, 0xe3), // white
+    Color32::from_rgb(0x6b, 0x82, 0x9e), // bright black
+    Color32::from_rgb(0xff, 0x96, 0xa7), // bright red
+    Color32::from_rgb(0xa3, 0xf0, 0xbd), // bright green
+    Color32::from_rgb(0xff, 0xe0, 0x8f), // bright yellow
+    Color32::from_rgb(0x9d, 0xc4, 0xff), // bright blue
+    Color32::from_rgb(0xdd, 0xc2, 0xff), // bright magenta
+    Color32::from_rgb(0x8c, 0xeb, 0xf5), // bright cyan
+    Color32::from_rgb(0xea, 0xf3, 0xfc), // bright white
 ];
 
-/// Terminal foreground `#b6c5d3`
-pub const TERM_FG: Color32 = Color32::from_rgb(0xb6, 0xc5, 0xd3);
-/// Terminal cursor `#ffbf69`
-pub const TERM_CURSOR: Color32 = Color32::from_rgb(0xff, 0xbf, 0x69);
-/// `selectionBackground: rgba(115, 167, 255, 0.24)`
-pub const TERM_SELECTION: Color32 = Color32::from_rgba_premultiplied(28, 40, 61, 61);
+/// Terminal foreground — the same soft cool white as the design token, so the
+/// terminal reads as part of the panel rather than as a dimmer widget.
+pub const TERM_FG: Color32 = TERMINAL_TEXT;
+/// Terminal cursor — the one warm accent in the terminal, kept amber so it is
+/// findable at a glance on the blue palette.
+pub const TERM_CURSOR: Color32 = Color32::from_rgb(0xff, 0xc4, 0x6b);
+/// Selection wash: a translucent blue that reads clearly over both the plain
+/// background and ANSI-coloured text.
+pub const TERM_SELECTION: Color32 = Color32::from_rgba_premultiplied(34, 51, 82, 82);
+/// Faint wash behind the row that holds the cursor. It marks the shell prompt /
+/// current input line without touching the remote `PS1`, so the place to type
+/// stays findable in a long scroll of output.
+pub const TERM_INPUT_LINE: Color32 = Color32::from_rgba_premultiplied(16, 30, 52, 38);
 
 // ── Radii (CSS px) ───────────────────────────────────────────────────────────
 
@@ -547,27 +563,52 @@ pub fn install_fonts(ctx: &egui::Context, mono_hint: &str, mono_size: f32) {
 }
 
 fn mono_candidates(hint: &str) -> Vec<(String, u32)> {
+    const MENLO: (&str, u32) = ("/System/Library/Fonts/Menlo.ttc", 0);
+    const MONACO: (&str, u32) = ("/System/Library/Fonts/Monaco.ttf", 0);
+    const SF_MONO: (&str, u32) = ("/System/Library/Fonts/SFNSMono.ttf", 0);
+    const ANDALE: (&str, u32) = ("/System/Library/Fonts/Supplemental/Andale Mono.ttf", 0);
+    const CONSOLAS: (&str, u32) = ("C:\\Windows\\Fonts\\consola.ttf", 0);
+    const LUCIDA: (&str, u32) = ("C:\\Windows\\Fonts\\lucon.ttf", 0);
+    const COURIER: (&str, u32) = ("C:\\Windows\\Fonts\\cour.ttf", 0);
+
     let mut out: Vec<(String, u32)> = Vec::new();
-    let hint_l = hint.to_lowercase();
-    if hint_l.contains("menlo") || hint_l.contains("monaco") || hint.is_empty() {
-        out.push(("/System/Library/Fonts/Menlo.ttc".into(), 0));
-        out.push(("/System/Library/Fonts/Monaco.ttf".into(), 0));
+    let add = |candidate: (&str, u32), out: &mut Vec<(String, u32)>| {
+        if !out
+            .iter()
+            .any(|(path, index)| path.as_str() == candidate.0 && *index == candidate.1)
+        {
+            out.push((candidate.0.to_string(), candidate.1));
+        }
+    };
+
+    // Resolve the configured families in the order the user listed them. The
+    // previous version always tried Menlo first, so choosing “SF Mono” or
+    // “Monaco” in settings silently kept Menlo.
+    for family in hint.to_lowercase().split(',').map(str::trim) {
+        let candidate = if family.contains("sf mono")
+            || family.contains("sfmono")
+            || family.contains("sf-mono")
+        {
+            Some(SF_MONO)
+        } else if family.contains("menlo") {
+            Some(MENLO)
+        } else if family.contains("monaco") {
+            Some(MONACO)
+        } else {
+            None
+        };
+        if let Some(candidate) = candidate {
+            add(candidate, &mut out);
+        }
     }
-    if hint_l.contains("sf mono") || hint_l.contains("sfmono") {
-        out.push(("/System/Library/Fonts/SFNSMono.ttf".into(), 0));
+
+    // Generic fallbacks, always appended. Windows first (Consolas, then Lucida
+    // Console / Courier New), then the macOS faces.
+    for candidate in [
+        CONSOLAS, LUCIDA, COURIER, MENLO, SF_MONO, MONACO, ANDALE,
+    ] {
+        add(candidate, &mut out);
     }
-    // Generic fallbacks, always appended.
-    // Windows: Consolas, then Lucida Console / Courier New.
-    out.push(("C:\\Windows\\Fonts\\consola.ttf".into(), 0));
-    out.push(("C:\\Windows\\Fonts\\lucon.ttf".into(), 0));
-    out.push(("C:\\Windows\\Fonts\\cour.ttf".into(), 0));
-    out.push(("/System/Library/Fonts/Menlo.ttc".into(), 0));
-    out.push(("/System/Library/Fonts/SFNSMono.ttf".into(), 0));
-    out.push(("/System/Library/Fonts/Monaco.ttf".into(), 0));
-    out.push((
-        "/System/Library/Fonts/Supplemental/Andale Mono.ttf".into(),
-        0,
-    ));
     out
 }
 
@@ -638,4 +679,25 @@ pub fn install_visuals(ctx: &egui::Context) {
     style.spacing.scroll = scroll;
 
     ctx.set_global_style(style);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mono_candidates;
+
+    #[test]
+    fn mono_candidates_follow_the_configured_order() {
+        assert_eq!(
+            mono_candidates("SF Mono, Menlo, monospace")[0].0,
+            "/System/Library/Fonts/SFNSMono.ttf"
+        );
+        assert_eq!(
+            mono_candidates("Monaco, monospace")[0].0,
+            "/System/Library/Fonts/Monaco.ttf"
+        );
+        assert_eq!(
+            mono_candidates("Menlo, Monaco, monospace")[0].0,
+            "/System/Library/Fonts/Menlo.ttc"
+        );
+    }
 }

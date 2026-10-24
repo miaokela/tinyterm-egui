@@ -448,6 +448,9 @@ pub struct TerminalUiState {
     /// Accumulating here keeps trackpads smooth instead of dropping tiny deltas
     /// or emitting one key per frame.
     pub wheel_accum: f32,
+    /// Input time of the next auto-scroll step while a selection is dragged past
+    /// the top/bottom edge of the pane.
+    pub drag_scroll_at: f64,
 }
 
 // ── Top-level app state ──────────────────────────────────────────────────────

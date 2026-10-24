@@ -10,6 +10,10 @@ use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind,
 
 pub const TERMINAL_PADDING: f32 = 8.0;
 
+/// Seconds between auto-scroll steps while a selection is dragged past the
+/// pane edge (≈25 steps/s, so it does not outrun the remote app).
+const DRAG_SCROLL_INTERVAL: f64 = 0.04;
+
 /// Everything the terminal pane needs to know about the session it renders.
 ///
 /// `backend_id` is the SSH session id (the tab's own id for the main terminal,
@@ -221,26 +225,122 @@ fn render_connected(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rec
         }
     }
 
-    // Selection drag (disabled while the app owns the mouse, unless Shift)
+    // Selection drag (disabled while the app owns the mouse, unless Shift).
+    // The selection stores absolute line numbers (see `term::Selection`) so the
+    // anchor survives fractional/remote scrolling below.
     if response.drag_started() && !mouse_reporting {
         if let Some(pos) = response.interact_pointer_pos() {
             let (c, r) = term::Terminal::cell_at(rect, metrics, pos, cols, rows);
+            let line = {
+                let mut t = live.terminal.lock();
+                t.begin_selection();
+                t.line_top() + r as i64
+            };
             let ui_state = app.terminal_ui_mut(session_id);
             ui_state.selection = term::Selection {
-                start: (r, c),
-                end: (r, c),
+                start: (line, c),
+                end: (line, c),
                 active: true,
             };
             ui_state.dragging = true;
+            ui_state.drag_scroll_at = 0.0;
         }
     }
     if response.dragged() && !mouse_reporting && app.terminal_ui_mut(session_id).dragging {
         if let Some(pos) = response.interact_pointer_pos() {
             let (c, r) = term::Terminal::cell_at(rect, metrics, pos, cols, rows);
+            let line = live.terminal.lock().line_top() + r as i64;
             let ui_state = app.terminal_ui_mut(session_id);
-            ui_state.selection.end = (r, c);
+            ui_state.selection.end = (line, c);
         }
     }
+
+    // ── Drag auto-scroll ────────────────────────────────────────────────────
+    // Dragging past the top/bottom edge keeps scrolling so a selection can be
+    // taller than the pane. The primary screen scrolls its local scrollback;
+    // the alternate screen (vim, less, …) has none, so the remote app is asked
+    // to scroll and the lines leaving the top are captured for the copy.
+    if app.terminal_ui_mut(session_id).dragging && !ctx.input(|i| i.pointer.primary_down()) {
+        // The release can be missed when the button comes up outside the
+        // window; never keep scrolling after the drag actually ended.
+        app.terminal_ui_mut(session_id).dragging = false;
+    }
+    if app.terminal_ui_mut(session_id).dragging && !app.overlay_owns_keyboard() {
+        let pointer = ctx.input(|i| i.pointer.interact_pos());
+        let edge = pointer.and_then(|pos| {
+            let below = pos.y - rect.bottom();
+            let above = rect.top() - pos.y;
+            if below > 0.0 {
+                Some((false, below))
+            } else if above > 0.0 {
+                Some((true, above))
+            } else {
+                None
+            }
+        });
+
+        if let (Some(pos), Some((towards_older, excess))) = (pointer, edge) {
+            let now = ctx.input(|i| i.time);
+            let due = {
+                let ui_state = app.terminal_ui_mut(session_id);
+                if now >= ui_state.drag_scroll_at {
+                    ui_state.drag_scroll_at = now + DRAG_SCROLL_INTERVAL;
+                    true
+                } else {
+                    false
+                }
+            };
+            let lines = ((excess / metrics.height).ceil() as i32).clamp(1, 6);
+
+            if due {
+                if alternate_screen {
+                    // Ask the TUI to scroll: a wheel report when it owns the
+                    // mouse, otherwise cursor keys (same as the wheel handler).
+                    let mut reports = String::new();
+                    if mouse_mode != vt100::MouseProtocolMode::None {
+                        let button = if towards_older { 64 } else { 65 };
+                        let (c, r) = term::Terminal::cell_at(rect, metrics, pos, cols, rows);
+                        for _ in 0..lines {
+                            reports.push_str(&mouse_seq(button, c, r, false, false, mouse_sgr));
+                        }
+                    } else {
+                        let key = if towards_older {
+                            egui::Key::ArrowUp
+                        } else {
+                            egui::Key::ArrowDown
+                        };
+                        if let Some(bytes) =
+                            term::encode_key(Some(key), "", false, false, false, app_cursor)
+                        {
+                            reports = bytes.repeat(lines as usize);
+                        }
+                    }
+                    if !reports.is_empty() {
+                        app.mgr.write(session_id, reports.into_bytes());
+                    }
+                } else {
+                    let delta = if towards_older { lines } else { -lines };
+                    live.terminal.lock().scroll_by(delta);
+                }
+            }
+
+            // Keep the moving end of the selection pinned to the edge being
+            // dragged past, even when a remote scroll arrives a frame later.
+            let (top, visible_rows) = {
+                let t = live.terminal.lock();
+                (t.line_top(), t.size().0)
+            };
+            let end_line = if towards_older {
+                top
+            } else {
+                top + visible_rows as i64 - 1
+            };
+            let col = term::Terminal::cell_at(rect, metrics, pos, cols, rows).0;
+            app.terminal_ui_mut(session_id).selection.end = (end_line, col);
+            ctx.request_repaint();
+        }
+    }
+
     if response.drag_stopped() {
         app.terminal_ui_mut(session_id).dragging = false;
     }

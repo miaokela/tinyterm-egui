@@ -96,7 +96,9 @@ fn collapse_bar(
             StrokeKind::Inside,
         );
     } else {
-        // Attached to the content panel above: only the shared edge needs a line.
+        // Attached to the content panel above: the shared edge is a divider, and
+        // the bar still needs its own left/right/bottom outline — without it the
+        // expanded file manager looks open at the bottom corners.
         painter.line_segment(
             [
                 Pos2::new(rect.left(), rect.top() + 0.5),
@@ -110,6 +112,20 @@ fn collapse_bar(
                     Color32::from_rgba_premultiplied(17, 40, 77, 51)
                 },
             ),
+        );
+        crate::widgets::stroke_open(
+            painter,
+            rect.shrink(0.5),
+            theme::RADIUS_PANEL,
+            Stroke::new(
+                1.0,
+                if hovered {
+                    theme::BORDER_ACTIVE
+                } else {
+                    theme::BORDER
+                },
+            ),
+            crate::widgets::OpenSide::Top,
         );
     }
 

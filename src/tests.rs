@@ -198,6 +198,105 @@ fn terminal_scrollback_offset_uses_the_real_maximum() {
 }
 
 #[test]
+fn selection_copy_includes_the_cell_under_the_pointer() {
+    let mut term = term::Terminal::new(4, 20, 100);
+    term.process(b"hello world\r\nsecond line");
+    term.apply_scroll();
+    let top = term.line_top();
+
+    // Dragging from column 0 to column 4 highlights five cells, so five
+    // characters have to be copied — the old implementation dropped the cell
+    // under the pointer.
+    let single = term::Selection {
+        start: (top, 0),
+        end: (top, 4),
+        active: true,
+    };
+    assert_eq!(term.selected_text(single), "hello");
+
+    // Multi-line: the first row runs to the end of the line, the last row is
+    // inclusive too.
+    let multi = term::Selection {
+        start: (top, 6),
+        end: (top + 1, 5),
+        active: true,
+    };
+    assert_eq!(term.selected_text(multi), "world\nsecond");
+}
+
+#[test]
+fn selection_copies_across_primary_scrollback() {
+    let mut term = term::Terminal::new(4, 20, 100);
+    for i in 0..10 {
+        term.process(format!("line {i}\r\n").as_bytes());
+    }
+    // 4 rows and 10 written lines: the live view starts at "line 7" and the
+    // first seven lines live in the scrollback.
+    let top = term.line_top();
+    assert_eq!(top, 7);
+
+    // Select from a scrolled-off line through a visible one. The anchor must
+    // stay put in absolute coordinates while the view is scrolled.
+    let sel = term::Selection {
+        start: (2, 0),
+        end: (top + 2, 20),
+        active: true,
+    };
+    let text = term.selected_text(sel);
+    assert_eq!(text, "line 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9");
+
+    // Scrolling back into the scrollback must not change what is selected.
+    term.scroll_by(4);
+    term.apply_scroll();
+    assert_eq!(term.line_top(), top - 4);
+    assert_eq!(term.selected_text(sel), text);
+}
+
+#[test]
+fn selection_captures_alternate_screen_scroll() {
+    let mut term = term::Terminal::new(4, 10, 100);
+    term.process(b"\x1b[?1049h");
+    term.process(b"a\r\nb\r\nc\r\nd");
+    term.apply_scroll();
+    term.begin_selection();
+    assert_eq!(term.line_top(), 0);
+
+    // Move past the last row: the alternate screen scrolls up by one line, so
+    // "a" is no longer visible. It still has to be copyable.
+    term.process(b"\r\n");
+    assert_eq!(term.line_top(), 1);
+
+    let sel = term::Selection {
+        start: (0, 0),
+        end: (3, 1),
+        active: true,
+    };
+    assert_eq!(term.selected_text(sel), "a\nb\nc\nd");
+}
+
+#[test]
+fn selection_tracks_alternate_screen_with_a_fixed_status_row() {
+    let mut term = term::Terminal::new(4, 10, 100);
+    term.process(b"\x1b[?1049h");
+    term.process(b"a\r\nb\r\nc\r\nSTATUS");
+    term.apply_scroll();
+    term.begin_selection();
+
+    // vim scrolls only its text area: the bottom status line stays put. The
+    // scroll is still detected, and "a" is captured for the copy.
+    term.process(b"\x1b[1;3r\x1b[3;1H\n\x1b[r");
+    assert_eq!(term.line_top(), 1);
+
+    let sel = term::Selection {
+        start: (0, 0),
+        end: (2, 1),
+        active: true,
+    };
+    assert_eq!(term.selected_text(sel), "a\nb\nc");
+    assert_eq!(term.screen().cell(3, 0).unwrap().contents(), "S");
+}
+
+#[test]
 fn paste_line_endings_are_normalized() {
     assert_eq!(
         crate::ui::terminal_view::normalize_paste("a\r\nb\rc\n".into()),

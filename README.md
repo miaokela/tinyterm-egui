@@ -45,6 +45,7 @@ same encrypted-secret envelope, same data directory. Point it at an existing
 - VT100/ANSI emulation (`vt100`): 256 colours, the full 16-colour ANSI palette, bold / italic / underline / reverse video
 - Configurable scrollback, three cursor styles (block / bar / underline) with optional blinking
 - Text selection and copy/paste (`Cmd/Ctrl` + `C` / `V`), right-click menu, paste confirmation with a preview and the `N lines · M chars` size
+- Drag a selection past the top/bottom edge to keep scrolling: a selection can span many screens, including vim/less (the alternate screen scrolls the remote program and keeps the rows that leave the top for the copy)
 - Mouse reporting for TUI programs (htop, vim, …); hold `Shift` while dragging to select text instead
 - Bracketed paste (DECSET 2004), so pasting into shells and editors behaves like the real thing
 - Side terminal: a second, independent SSH session next to the current one

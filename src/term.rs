@@ -6,8 +6,14 @@
 
 use crate::theme;
 use egui::{Align2, Color32, CornerRadius, FontId, Pos2, Rect, Stroke, Vec2};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use vt100::{Color as VtColor, Parser, Screen};
+
+/// How many alternate-screen lines are kept for selection copy. The alternate
+/// screen has no scrollback in vt100, so rows that scroll off its top are
+/// captured here.
+const ALT_HISTORY_LIMIT: usize = 8192;
 
 /// Terminal cursor shape, driven by `Settings::cursor_style`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -102,16 +108,21 @@ struct Run {
     underline: bool,
 }
 
-/// Terminal scroll/selection state kept by the UI (not by vt100).
+/// Terminal selection kept by the UI (not by vt100).
+///
+/// Endpoints are *absolute* line numbers in the same coordinate space as
+/// [`Terminal::line_top`], not visible rows. That lets a selection keep its
+/// anchor while the view auto-scrolls underneath it, which is what makes a
+/// selection taller than the pane possible.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Selection {
-    pub start: (u16, u16),
-    pub end: (u16, u16),
+    pub start: (i64, u16),
+    pub end: (i64, u16),
     pub active: bool,
 }
 
 impl Selection {
-    pub fn normalized(&self) -> ((u16, u16), (u16, u16)) {
+    pub fn normalized(&self) -> ((i64, u16), (i64, u16)) {
         if self.start <= self.end {
             (self.start, self.end)
         } else {
@@ -119,9 +130,9 @@ impl Selection {
         }
     }
 
-    pub fn contains(&self, row: u16, col: u16) -> bool {
+    pub fn contains(&self, line: i64, col: u16) -> bool {
         let (a, b) = self.normalized();
-        (row, col) >= a && (row, col) <= b
+        (line, col) >= a && (line, col) <= b
     }
 
     pub fn is_empty(&self) -> bool {
@@ -129,10 +140,29 @@ impl Selection {
     }
 }
 
+/// One captured alternate-screen row: its text plus the wrap flag, which
+/// decides whether the row is joined to the next one when copying.
+#[derive(Debug, Clone)]
+struct CapturedRow {
+    text: String,
+    wrapped: bool,
+}
+
 pub struct Terminal {
     pub parser: Parser,
     /// Rows scrolled back from the live view (0 = live).
     pub scroll_offset: usize,
+    /// Number of lines in the primary screen's scrollback. Mirrored so absolute
+    /// line numbers can be computed on the UI thread without moving the view.
+    history_len: usize,
+    /// Rows of the alternate screen as of the last processed output chunk.
+    alt_prev: Vec<CapturedRow>,
+    /// Absolute line number of the first visible alternate-screen row. May go
+    /// negative: dragging upwards reveals lines that existed before the drag
+    /// started, which have no captured history yet.
+    alt_top: i64,
+    /// Alternate-screen lines that scrolled off the top, keyed by absolute line.
+    alt_history: BTreeMap<i64, CapturedRow>,
 }
 
 impl Terminal {
@@ -140,13 +170,112 @@ impl Terminal {
         Self {
             parser: Parser::new(rows, cols, scrollback),
             scroll_offset: 0,
+            history_len: 0,
+            alt_prev: Vec::new(),
+            alt_top: 0,
+            alt_history: BTreeMap::new(),
         }
     }
 
     pub fn process(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
-        // Jump back to the live view when new output arrives while scrolled up
-        // only if the user is already at the bottom.
+        self.sync_scrollback_len();
+        self.track_alt_scroll();
+    }
+
+    /// Refresh `history_len` from the emulator. `Screen::scrollback()` reports
+    /// the *current* offset, so the maximum has to be read by moving to it and
+    /// restoring the view afterwards.
+    fn sync_scrollback_len(&mut self) {
+        // The alternate grid has no scrollback; keep the primary value so a
+        // selection made right after leaving a TUI still maps correctly.
+        if self.parser.screen().alternate_screen() {
+            return;
+        }
+        let saved = self.parser.screen().scrollback();
+        {
+            let screen = self.parser.screen_mut();
+            screen.set_scrollback(usize::MAX);
+            self.history_len = screen.scrollback();
+            screen.set_scrollback(saved);
+        }
+        // Output while scrolled back makes vt100 advance the offset to keep the
+        // same content anchored; mirror that so absolute selection coordinates
+        // stay stable across the next `apply_scroll`.
+        self.scroll_offset = saved;
+    }
+
+    /// Detect vertical movement of the alternate screen and remember the rows
+    /// that leave the top. vt100 keeps no scrollback for the alternate grid,
+    /// so this is the only way a selection can be copied after it scrolled out
+    /// of view (vim, less, …).
+    fn track_alt_scroll(&mut self) {
+        if !self.parser.screen().alternate_screen() {
+            self.alt_prev.clear();
+            self.alt_top = 0;
+            self.alt_history.clear();
+            return;
+        }
+
+        let cur = self.snapshot_alt_rows();
+        if self.alt_prev.len() == cur.len() && !cur.is_empty() {
+            let shift = detect_alt_shift(&self.alt_prev, &cur);
+            if shift > 0 {
+                let k = shift as usize;
+                let leaving: Vec<CapturedRow> = self.alt_prev.iter().take(k).cloned().collect();
+                let top = self.alt_top;
+                for (i, row) in leaving.into_iter().enumerate() {
+                    self.push_alt_history(top + i as i64, row);
+                }
+                self.alt_top += k as i64;
+            } else if shift < 0 {
+                // The view moved back up over content we may never have seen;
+                // no history is needed because those rows are on screen.
+                self.alt_top += shift as i64;
+            }
+        }
+        self.alt_prev = cur;
+    }
+
+    fn snapshot_alt_rows(&self) -> Vec<CapturedRow> {
+        let screen = self.parser.screen();
+        let cols = screen.size().1;
+        screen
+            .rows(0, cols)
+            .enumerate()
+            .map(|(row, text)| CapturedRow {
+                text,
+                wrapped: screen.row_wrapped(row as u16),
+            })
+            .collect()
+    }
+
+    fn push_alt_history(&mut self, line: i64, row: CapturedRow) {
+        self.alt_history.insert(line, row);
+        while self.alt_history.len() > ALT_HISTORY_LIMIT {
+            self.alt_history.pop_first();
+        }
+    }
+
+    /// Start a fresh selection coordinate space. Called when a drag begins so
+    /// the anchor is expressed relative to the screen content at that moment.
+    pub fn begin_selection(&mut self) {
+        self.alt_top = 0;
+        self.alt_history.clear();
+        self.alt_prev = if self.parser.screen().alternate_screen() {
+            self.snapshot_alt_rows()
+        } else {
+            Vec::new()
+        };
+    }
+
+    /// Absolute line number of the first visible row.
+    pub fn line_top(&self) -> i64 {
+        if self.parser.screen().alternate_screen() {
+            self.alt_top
+        } else {
+            self.history_len as i64 - self.scroll_offset as i64
+        }
     }
 
     pub fn screen(&self) -> &Screen {
@@ -161,6 +290,12 @@ impl Terminal {
         let (r, c) = self.size();
         if r != rows || c != cols {
             self.parser.screen_mut().set_size(rows, cols);
+            self.sync_scrollback_len();
+            self.alt_prev = if self.parser.screen().alternate_screen() {
+                self.snapshot_alt_rows()
+            } else {
+                Vec::new()
+            };
         }
     }
 
@@ -187,18 +322,133 @@ impl Terminal {
         self.parser.screen_mut().set_scrollback(0);
     }
 
-    /// Text between two cells. The selection lives in the UI state, so it is
-    /// passed in rather than read from `self`.
-    pub fn selected_text(&self, selection: Selection) -> String {
+    /// Text covered by `selection`.
+    ///
+    /// The selection lives in the UI state, so it is passed in rather than read
+    /// from `self`. Endpoints are inclusive (the cell under the pointer is part
+    /// of the selection, matching the highlight). Lines above the visible area
+    /// are read back from the primary scrollback (or from the captured
+    /// alternate-screen history).
+    pub fn selected_text(&mut self, selection: Selection) -> String {
         if selection.is_empty() {
             return String::new();
         }
-        let (a, b) = selection.normalized();
-        self.parser
-            .screen()
-            .contents_between(a.0, a.1, b.0, b.1)
-            .trim_end()
-            .to_string()
+        let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
+        let (_rows, cols) = self.size();
+        let alt = self.parser.screen().alternate_screen();
+        let top = self.line_top();
+        let mut out = String::new();
+
+        for line in start_line..=end_line {
+            let from = if line == start_line { start_col } else { 0 };
+            let to = if line == end_line {
+                end_col.saturating_add(1).min(cols)
+            } else {
+                cols
+            };
+            if to > from {
+                let (text, _wrapped) = if alt {
+                    self.alt_line(line, top, from, to)
+                } else {
+                    self.primary_line(line, from, to)
+                };
+                out.push_str(&text);
+            }
+            if line != end_line {
+                let wrapped = if alt {
+                    self.alt_line_wrapped(line, top)
+                } else {
+                    self.primary_line_wrapped(line)
+                };
+                if !wrapped {
+                    out.push('\n');
+                }
+            }
+        }
+        out.trim_end().to_string()
+    }
+
+    /// Text of one row of the alternate screen at absolute `line`, restricted
+    /// to columns `[from, to)`.
+    fn alt_line(&self, line: i64, top: i64, from: u16, to: u16) -> (String, bool) {
+        if line >= top {
+            let screen = self.parser.screen();
+            let row = line - top;
+            if row < screen.size().0 as i64 {
+                let row = row as u16;
+                let text = screen
+                    .rows(from, to - from)
+                    .nth(row as usize)
+                    .unwrap_or_default();
+                return (text, screen.row_wrapped(row));
+            }
+            return (String::new(), false);
+        }
+
+        if let Some(row) = self.alt_history.get(&line) {
+            // History rows are plain text, so columns map to chars here. Wide
+            // glyphs can shift the slice by a cell; acceptable for copy.
+            let text: String = row
+                .text
+                .chars()
+                .skip(from as usize)
+                .take(to.saturating_sub(from) as usize)
+                .collect();
+            return (text, row.wrapped);
+        }
+        (String::new(), false)
+    }
+
+    fn alt_line_wrapped(&self, line: i64, top: i64) -> bool {
+        if line >= top {
+            let screen = self.parser.screen();
+            let row = line - top;
+            return row >= 0 && row < screen.size().0 as i64 && screen.row_wrapped(row as u16);
+        }
+        self.alt_history
+            .get(&line)
+            .map(|row| row.wrapped)
+            .unwrap_or(false)
+    }
+
+    /// Text of one row of the primary screen at absolute `line`.
+    fn primary_line(&mut self, line: i64, from: u16, to: u16) -> (String, bool) {
+        let saved = self.parser.screen().scrollback();
+        let history_len = self.history_len as i64;
+        let offset = (history_len - line).clamp(0, history_len) as usize;
+        self.parser.screen_mut().set_scrollback(offset);
+        let (text, wrapped) = {
+            let screen = self.parser.screen();
+            let row = line - (history_len - offset as i64);
+            if row < 0 || row >= screen.size().0 as i64 {
+                (String::new(), false)
+            } else {
+                let row = row as u16;
+                (
+                    screen
+                        .rows(from, to - from)
+                        .nth(row as usize)
+                        .unwrap_or_default(),
+                    screen.row_wrapped(row),
+                )
+            }
+        };
+        self.parser.screen_mut().set_scrollback(saved);
+        (text, wrapped)
+    }
+
+    fn primary_line_wrapped(&mut self, line: i64) -> bool {
+        let saved = self.parser.screen().scrollback();
+        let history_len = self.history_len as i64;
+        let offset = (history_len - line).clamp(0, history_len) as usize;
+        self.parser.screen_mut().set_scrollback(offset);
+        let wrapped = {
+            let screen = self.parser.screen();
+            let row = line - (history_len - offset as i64);
+            row >= 0 && row < screen.size().0 as i64 && screen.row_wrapped(row as u16)
+        };
+        self.parser.screen_mut().set_scrollback(saved);
+        wrapped
     }
 
     /// Number of columns/rows that fit in `rect` for the given metrics.
@@ -217,6 +467,75 @@ impl Terminal {
             row.clamp(0.0, (rows.saturating_sub(1)) as f32) as u16,
         )
     }
+}
+
+/// Detect a vertical scrolling step in the alternate screen.
+///
+/// Returns how many rows the visible content moved *up* (positive) or down
+/// (negative). vt100 does not report scrolling, so consecutive snapshots are
+/// compared: identical rows shifted by `k` mean the app scrolled by `k`.
+/// Fixed rows are allowed at the top (a vim tabline) and at the bottom (vim's
+/// status/command lines), and one redrawn row is tolerated.
+fn detect_alt_shift(prev: &[CapturedRow], cur: &[CapturedRow]) -> i32 {
+    let rows = cur.len();
+    if rows < 4 || prev.len() != rows {
+        return 0;
+    }
+    if let Some(k) = find_shift(prev, cur, true) {
+        return k as i32;
+    }
+    if let Some(k) = find_shift(prev, cur, false) {
+        return -(k as i32);
+    }
+    0
+}
+
+fn find_shift(prev: &[CapturedRow], cur: &[CapturedRow], up: bool) -> Option<usize> {
+    let rows = cur.len();
+    for k in 1..rows {
+        for top_keep in 0..=1 {
+            for bottom_keep in 0..=2 {
+                if top_keep + bottom_keep + k >= rows {
+                    continue;
+                }
+                let region = rows - (top_keep + bottom_keep + k);
+                if region < 3 {
+                    continue;
+                }
+                // Rows outside the scrolling region must not have moved.
+                if (0..top_keep).any(|i| cur[i].text != prev[i].text) {
+                    continue;
+                }
+                if (0..bottom_keep).any(|i| cur[rows - 1 - i].text != prev[rows - 1 - i].text) {
+                    continue;
+                }
+                // The edge of the moving region has to have changed, otherwise
+                // a static screen full of identical rows would look like a
+                // scroll.
+                if cur[top_keep].text == prev[top_keep].text {
+                    continue;
+                }
+                let mut diffs = 0;
+                for r in 0..region {
+                    let (a, b) = if up {
+                        (top_keep + r, top_keep + k + r)
+                    } else {
+                        (top_keep + k + r, top_keep + r)
+                    };
+                    if cur[a].text != prev[b].text {
+                        diffs += 1;
+                        if diffs > 1 {
+                            break;
+                        }
+                    }
+                }
+                if diffs <= 1 {
+                    return Some(k);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Result of painting one frame.
@@ -247,6 +566,22 @@ pub fn paint(
     let cursor_hidden = screen.hide_cursor();
     let show_cursor = !cursor_hidden && term.scroll_offset == 0;
 
+    // Current input line: a faint wash behind the row that owns the cursor.
+    // Shell prompts are plain text chosen by the remote `PS1`, so without this
+    // the line where the user is supposed to type is just another row of
+    // output. Drawn before the cell backgrounds so coloured blocks still win.
+    if show_cursor && !screen.alternate_screen() {
+        let y = rect.top() + cursor.0 as f32 * metrics.height;
+        painter.rect_filled(
+            Rect::from_min_max(
+                Pos2::new(rect.left(), y),
+                Pos2::new(rect.right(), (y + metrics.height).min(rect.bottom())),
+            ),
+            0,
+            theme::TERM_INPUT_LINE,
+        );
+    }
+
     for row in 0..rows {
         let y = rect.top() + row as f32 * metrics.height;
         if y > rect.bottom() {
@@ -261,7 +596,13 @@ pub fn paint(
                 col += 1;
                 continue;
             };
-            let mut fg = vt_color(cell.fgcolor(), theme::TERM_FG);
+            // Bold text promotes the eight named colours to their bright
+            // variants — the standard terminal cue for emphasis, and the only
+            // one available here because egui has no synthetic bold face.
+            let mut fg = match cell.fgcolor() {
+                VtColor::Idx(i) if cell.bold() && i < 8 => idx_color(i + 8),
+                other => vt_color(other, theme::TERM_FG),
+            };
             let mut bg = vt_color(cell.bgcolor(), theme::TERMINAL_BG);
             if cell.inverse() {
                 std::mem::swap(&mut fg, &mut bg);
@@ -311,11 +652,12 @@ pub fn paint(
         }
 
         // ── Selection highlight ──────────────────────────────────────────────
+        let line = term.line_top() + row as i64;
         if !selection.is_empty() {
             let (a, b) = selection.normalized();
-            if row >= a.0 && row <= b.0 {
-                let start_col = if row == a.0 { a.1 } else { 0 };
-                let end_col = if row == b.0 { b.1 } else { cols.saturating_sub(1) };
+            if line >= a.0 && line <= b.0 {
+                let start_col = if line == a.0 { a.1 } else { 0 };
+                let end_col = if line == b.0 { b.1 } else { cols.saturating_sub(1) };
                 let x0 = rect.left() + start_col as f32 * metrics.width;
                 let x1 = rect.left() + (end_col + 1) as f32 * metrics.width;
                 painter.rect_filled(
