@@ -161,6 +161,13 @@ impl TinyTermApp {
                     self.state.refresh_transfer_busy(&sid);
                 }
             }
+            AppEvent::LocalDir { session_id, path } => {
+                // Re-list the local panel after a download. Only when the user is
+                // still looking at the download target — navigating them back
+                // from wherever they browsed to would be disorienting.
+                self.state
+                    .refresh_local_dir_after_transfer(&session_id, &path);
+            }
             AppEvent::RemoteDelete {
                 path,
                 success,

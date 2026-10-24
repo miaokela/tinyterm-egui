@@ -148,7 +148,10 @@ impl SessionManager {
                     });
                 }
                 TransferDirection::Download => {
-                    let _ = crate::local_fs::list_dir(&job.target_dir);
+                    bus.send(AppEvent::LocalDir {
+                        session_id: job.session_id.clone(),
+                        path: job.target_dir.clone(),
+                    });
                 }
             }
         });

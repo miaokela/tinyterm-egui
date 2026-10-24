@@ -1,7 +1,7 @@
 //! File manager — dual local/remote panels, transfer queue, context menus.
 //! Layout and behaviour follow `docs/spec-filemanager.md`.
 
-use crate::models::{FileInfo, TransferDirection, TransferStatus};
+use crate::models::{FileInfo, TransferDirection, TransferProgress, TransferStatus};
 use crate::remote_fs;
 use crate::state::{
     AppState, InlineAction, InlineKind, PanelSide, FM_BAR_HEIGHT, FM_CONTENT_HEIGHT,
@@ -14,7 +14,7 @@ const ROW_HEIGHT: f32 = 22.0;
 const DIVIDER_WIDTH: f32 = 32.0;
 const PANEL_HEADER_HEIGHT: f32 = 26.0;
 const PATH_BAR_HEIGHT: f32 = 24.0;
-const QUEUE_ROW_HEIGHT: f32 = 28.0;
+const QUEUE_ROW_HEIGHT: f32 = 34.0;
 
 pub fn show(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rect) {
     if rect.height() < 10.0 {
@@ -240,12 +240,13 @@ fn content(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rect) {
         .cloned()
         .collect();
 
-    // One row per batch group, one per unfinished loose transfer.
+    // One row per batch group, one per unfinished loose transfer. The band pads
+    // 5 px around the cards and leaves 4 px between them.
     let queue_rows = build_queue_rows(&transfers).len();
     let queue_height = if queue_rows == 0 {
         0.0
     } else {
-        10.0 + queue_rows as f32 * (QUEUE_ROW_HEIGHT + 4.0)
+        10.0 + queue_rows as f32 * QUEUE_ROW_HEIGHT + (queue_rows as f32 - 1.0) * 4.0
     };
     let queue_rect = Rect::from_min_size(
         Pos2::new(rect.left(), rect.top()),
@@ -287,27 +288,27 @@ fn content(ui: &mut Ui, app: &mut AppState, session_id: &str, rect: Rect) {
 
 /// One drawn line of the transfer queue.
 enum QueueRow {
-    /// A batch: one line summarising every sub-item.
+    /// A batch: one row that summarises the whole group and stays visible until
+    /// the parent row reports `Done` (or the batch ends with failures).
     Group {
         gid: String,
-        items: Vec<crate::models::TransferProgress>,
+        parent: TransferProgress,
+        items: Vec<TransferProgress>,
     },
     /// A loose transfer: one line per unfinished item.
-    Single(crate::models::TransferProgress),
+    Single(TransferProgress),
 }
 
 /// Build the rows the queue will draw.
 ///
-/// Mirrors `TransferQueue` in the web client: batch groups collapse to a single
-/// line, loose transfers get one line each, and finished items disappear.
-fn build_queue_rows(
-    transfers: &[crate::models::TransferProgress],
-) -> Vec<QueueRow> {
+/// Batch visibility is driven by the **parent** row, not by the children: the
+/// children flip to `Done` one at a time, so between two files there is a frame
+/// with no active child — the old check hid the whole batch there, which made
+/// the progress row blink out and reappear for every file.
+fn build_queue_rows(transfers: &[TransferProgress]) -> Vec<QueueRow> {
     let mut order: Vec<Option<String>> = Vec::new();
-    let mut groups: std::collections::HashMap<
-        Option<String>,
-        Vec<crate::models::TransferProgress>,
-    > = std::collections::HashMap::new();
+    let mut groups: std::collections::HashMap<Option<String>, Vec<TransferProgress>> =
+        std::collections::HashMap::new();
     for t in transfers {
         let key = t.group_id.clone();
         if !groups.contains_key(&key) {
@@ -323,17 +324,21 @@ fn build_queue_rows(
         };
         match &key {
             Some(gid) => {
-                let sub: Vec<crate::models::TransferProgress> = items
+                let Some(parent) = items.iter().find(|t| &t.id == gid).cloned() else {
+                    continue;
+                };
+                let failed = items
                     .iter()
-                    .filter(|t| &t.id != gid)
-                    .cloned()
-                    .collect();
-                if sub.iter().any(|t| t.status != TransferStatus::Done) {
-                    rows.push(QueueRow::Group {
-                        gid: gid.clone(),
-                        items: sub,
-                    });
+                    .any(|t| matches!(t.status, TransferStatus::Error | TransferStatus::Conflict));
+                if parent.status == TransferStatus::Done && !failed {
+                    continue;
                 }
+                let children = items.iter().filter(|t| &t.id != gid).cloned().collect();
+                rows.push(QueueRow::Group {
+                    gid: gid.clone(),
+                    parent,
+                    items: children,
+                });
             }
             None => {
                 for item in items.iter().filter(|t| t.status != TransferStatus::Done) {
@@ -345,12 +350,32 @@ fn build_queue_rows(
     rows
 }
 
+/// Everything the queue painter needs for one row, independent of whether it
+/// belongs to a batch or to a single transfer.
+struct QueueRowView<'a> {
+    direction: TransferDirection,
+    name: &'a str,
+    percent: f32,
+    /// Right-aligned label: the percentage, or an error/cancel state.
+    status: (String, bool),
+    /// Muted text shown before the status (batch counters, …).
+    meta: Option<String>,
+    /// Render the meta text in the error colour (it mentions failed items).
+    meta_error: bool,
+    /// Draw the progress fill in the error colour.
+    error: bool,
+    /// Tooltip carrying the underlying error message.
+    error_tip: Option<&'a str>,
+    /// `(transfer id, tooltip)` when the row can be cancelled.
+    cancel: Option<(String, &'static str)>,
+}
+
 fn transfer_queue(
     ui: &mut Ui,
     app: &mut AppState,
     session_id: &str,
     rect: Rect,
-    transfers: &[crate::models::TransferProgress],
+    transfers: &[TransferProgress],
 ) {
     let painter = ui.painter().clone();
     painter.rect_filled(
@@ -381,277 +406,373 @@ fn transfer_queue(
         if row_rect.bottom() > rect.bottom() {
             break;
         }
-        painter.rect_filled(
-            row_rect,
-            CornerRadius::same(theme::RADIUS_SM),
-            Color32::from_rgba_premultiplied(8, 8, 8, 8),
-        );
 
         match row {
-            QueueRow::Group { gid, items } => {
-                let transferring = items
-                    .iter()
-                    .find(|t| t.status == TransferStatus::Transferring);
-                let done = items
-                    .iter()
-                    .filter(|t| t.status == TransferStatus::Done)
-                    .count();
-                let pending = items
-                    .len()
-                    .saturating_sub(done)
-                    .saturating_sub(usize::from(transferring.is_some()));
-                let has_error = items
-                    .iter()
-                    .any(|t| matches!(t.status, TransferStatus::Error | TransferStatus::Conflict));
-                let current = transferring
-                    .or_else(|| items.iter().find(|t| t.status == TransferStatus::Pending))
-                    .or_else(|| items.first());
-
-                let dir = current.map(|t| t.direction).unwrap_or(TransferDirection::Upload);
-                let current_percent = current.map(|t| t.percent()).unwrap_or(0.0);
-                let overall_percent = if items.is_empty() {
-                    0.0
-                } else {
-                    (done as f32 / items.len() as f32) * 100.0
-                };
-                let show_percent = if transferring.is_some() {
-                    current_percent
-                } else {
-                    overall_percent
-                };
-                let action = match dir {
-                    TransferDirection::Upload => "正在上传:",
-                    TransferDirection::Download => "正在下载:",
-                };
-
-                widgets::icon(
-                    &painter,
-                    Pos2::new(row_rect.left() + 14.0, row_rect.center().y),
-                    13.0,
-                    // Same left/right language as the transfer buttons.
-                    match dir {
-                        TransferDirection::Upload => crate::icons::ARROW_RIGHT,
-                        TransferDirection::Download => crate::icons::ARROW_LEFT,
-                    },
-                    theme::ACCENT,
-                );
-                painter.text(
-                    Pos2::new(row_rect.left() + 28.0, row_rect.center().y),
-                    Align2::LEFT_CENTER,
-                    action,
-                    theme::f_xs(),
-                    theme::TEXT_SECONDARY,
-                );
-                let name = current.map(|t| t.file_name.clone()).unwrap_or_default();
-                let name_left = row_rect.left() + 96.0;
-                painter.text(
-                    Pos2::new(name_left, row_rect.center().y),
-                    Align2::LEFT_CENTER,
-                    theme::truncate(
-                        &painter,
-                        &name,
-                        &theme::f_xs(),
-                        (row_rect.left() + 202.0 - name_left).max(40.0),
-                    ),
-                    theme::f_xs(),
-                    theme::TEXT_PRIMARY,
-                );
-                // Columns from the right: [待传 60][完成 60][cancel 32]; the
-                // percentage is right-aligned just left of them.
-                let track = Rect::from_min_max(
-                    Pos2::new(row_rect.left() + 210.0, row_rect.center().y - 2.0),
-                    Pos2::new(row_rect.right() - 172.0, row_rect.center().y + 2.0),
-                );
-                if track.width() > 20.0 {
-                    progress_track(&painter, track, show_percent / 100.0, has_error);
-                }
-                painter.text(
-                    Pos2::new(row_rect.right() - 160.0, row_rect.center().y),
-                    Align2::RIGHT_CENTER,
-                    format!("{show_percent:.0}%"),
-                    theme::f_xs(),
-                    theme::TEXT_SECONDARY,
-                );
-
-                let pending_rect = Rect::from_min_size(
-                    Pos2::new(row_rect.right() - 156.0, row_rect.top()),
-                    Vec2::new(60.0, row_rect.height()),
-                );
-                let done_rect = Rect::from_min_size(
-                    Pos2::new(row_rect.right() - 96.0, row_rect.top()),
-                    Vec2::new(60.0, row_rect.height()),
-                );
-                for (r, label, value, color) in [
-                    (pending_rect, "待传", pending, theme::WARNING),
-                    (done_rect, "完成", done, theme::SUCCESS),
-                ] {
-                    painter.line_segment(
-                        [
-                            Pos2::new(r.left(), r.top() + 4.0),
-                            Pos2::new(r.left(), r.bottom() - 4.0),
-                        ],
-                        Stroke::new(1.0, Color32::from_rgba_premultiplied(13, 13, 13, 15)),
-                    );
-                    painter.text(
-                        Pos2::new(r.left() + 8.0, r.center().y),
-                        Align2::LEFT_CENTER,
-                        label,
-                        theme::font_sans(theme::TEXT_XS - 1.0),
-                        theme::TEXT_MUTED,
-                    );
-                    painter.text(
-                        Pos2::new(r.left() + 40.0, r.center().y),
-                        Align2::LEFT_CENTER,
-                        value.to_string(),
-                        theme::f_xs(),
-                        color,
-                    );
-                }
-
-                let cancel_rect = Rect::from_center_size(
-                    Pos2::new(row_rect.right() - 20.0, row_rect.center().y),
-                    Vec2::splat(24.0),
-                );
-                let r = ui.interact(
-                    cancel_rect,
-                    ui.id().with(("cancel-group", session_id, &gid)),
-                    Sense::click(),
-                );
-                widgets::cross(
-                    &painter,
-                    cancel_rect.center(),
-                    9.0,
-                    if r.hovered() { theme::ERROR } else { theme::TEXT_MUTED },
-                );
-                if r.hovered() {
-                    r.clone().on_hover_text("全部取消");
-                }
-                if r.clicked() {
-                    app.cancel_transfer(&gid);
-                }
-            }
-            QueueRow::Single(item) => {
-                let percent = item.percent();
-                let is_error = matches!(
-                    item.status,
-                    TransferStatus::Error | TransferStatus::Conflict
-                );
-
-                widgets::icon(
-                    &painter,
-                    Pos2::new(row_rect.left() + 14.0, row_rect.center().y),
-                    13.0,
-                    match item.direction {
-                        TransferDirection::Upload => crate::icons::ARROW_RIGHT,
-                        TransferDirection::Download => crate::icons::ARROW_LEFT,
-                    },
-                    theme::ACCENT,
-                );
-                painter.text(
-                    Pos2::new(row_rect.left() + 30.0, row_rect.center().y),
-                    Align2::LEFT_CENTER,
-                    theme::truncate(
-                        &painter,
-                        &item.file_name,
-                        &theme::f_xs(),
-                        (row_rect.left() + 184.0 - (row_rect.left() + 30.0)).max(40.0),
-                    ),
-                    theme::f_xs(),
-                    theme::TEXT_PRIMARY,
-                );
-                // [percent][error label][cancel], laid out right-to-left so the
-                // percentage never runs under the label or the button.
-                let track = Rect::from_min_max(
-                    Pos2::new(row_rect.left() + 192.0, row_rect.center().y - 2.0),
-                    Pos2::new(row_rect.right() - 160.0, row_rect.center().y + 2.0),
-                );
-                if track.width() > 20.0 {
-                    progress_track(&painter, track, percent / 100.0, is_error);
-                }
-                painter.text(
-                    Pos2::new(row_rect.right() - 154.0, row_rect.center().y),
-                    Align2::LEFT_CENTER,
-                    format!("{percent:.0}%"),
-                    theme::f_xs(),
-                    theme::TEXT_SECONDARY,
-                );
-
-                if is_error {
-                    let label = match item.error.as_deref() {
-                        Some("用户取消") | Some("Cancelled") => "已取消",
-                        _ => "失败",
-                    };
-                    let r = ui.interact(
-                        Rect::from_min_size(
-                            Pos2::new(row_rect.right() - 76.0, row_rect.top()),
-                            Vec2::new(56.0, row_rect.height()),
-                        ),
-                        ui.id().with(("transfer-err", session_id, &item.id)),
-                        Sense::hover(),
-                    );
-                    painter.text(
-                        Pos2::new(row_rect.right() - 40.0, row_rect.center().y),
-                        Align2::RIGHT_CENTER,
-                        label,
-                        theme::f_xs(),
-                        theme::ERROR,
-                    );
-                    if let Some(err) = item.error.as_deref() {
-                        r.on_hover_text(err);
-                    }
-                }
-
-                if matches!(
-                    item.status,
-                    TransferStatus::Pending | TransferStatus::Transferring
-                ) {
-                    let cancel_rect = Rect::from_center_size(
-                        Pos2::new(row_rect.right() - 20.0, row_rect.center().y),
-                        Vec2::splat(24.0),
-                    );
-                    let r = ui.interact(
-                        cancel_rect,
-                        ui.id().with(("cancel-transfer", session_id, &item.id)),
-                        Sense::click(),
-                    );
-                    widgets::cross(
-                        &painter,
-                        cancel_rect.center(),
-                        9.0,
-                        if r.hovered() { theme::ERROR } else { theme::TEXT_MUTED },
-                    );
-                    if r.hovered() {
-                        r.clone().on_hover_text("取消");
-                    }
-                    if r.clicked() {
-                        app.cancel_transfer(&item.id);
-                    }
-                }
-            }
+            QueueRow::Group {
+                gid,
+                parent,
+                items,
+            } => group_row(ui, app, session_id, row_rect, &gid, &parent, &items),
+            QueueRow::Single(item) => single_row(ui, app, session_id, row_rect, &item),
         }
     }
 }
 
-/// Shared progress track (`background: rgba(0,0,0,.3)`, 4 px tall).
-fn progress_track(painter: &egui::Painter, track: Rect, fraction: f32, error: bool) {
-    painter.rect_filled(
-        track,
-        CornerRadius::same(theme::RADIUS_XS),
-        Color32::from_rgba_premultiplied(0, 0, 0, 77),
-    );
-    let fill = Rect::from_min_size(
-        track.min,
-        Vec2::new(track.width() * fraction.clamp(0.0, 1.0), track.height()),
-    );
-    painter.rect_filled(
-        fill,
-        CornerRadius::same(theme::RADIUS_XS),
-        if error {
-            Color32::from_rgba_premultiplied(150, 34, 34, 204)
+fn group_row(
+    ui: &mut Ui,
+    app: &mut AppState,
+    session_id: &str,
+    rect: Rect,
+    gid: &str,
+    parent: &TransferProgress,
+    items: &[TransferProgress],
+) {
+    let transferring = items
+        .iter()
+        .find(|t| t.status == TransferStatus::Transferring);
+    let current = transferring
+        .or_else(|| items.iter().find(|t| t.status == TransferStatus::Pending))
+        .or_else(|| items.last());
+
+    let direction = current.map(|t| t.direction).unwrap_or(parent.direction);
+    let name = current
+        .map(|t| t.file_name.as_str())
+        .unwrap_or(parent.file_name.as_str());
+
+    let total = parent.total as usize;
+    let done = items
+        .iter()
+        .filter(|t| t.status == TransferStatus::Done)
+        .count();
+    let failed = items
+        .iter()
+        .filter(|t| matches!(t.status, TransferStatus::Error | TransferStatus::Conflict))
+        .count();
+    let active = parent.status.is_busy() || items.iter().any(|t| t.status.is_busy());
+    let error = failed > 0
+        || matches!(
+            parent.status,
+            TransferStatus::Error | TransferStatus::Conflict
+        );
+    let status_is_error = !active && error;
+
+    // While a file is moving, show its own progress. A finished batch with
+    // failures keeps a red bar at the success ratio instead of pretending that
+    // every file was attempted successfully.
+    let percent = if let Some(t) = transferring {
+        t.percent()
+    } else if status_is_error && total > 0 {
+        done as f32 / total as f32 * 100.0
+    } else {
+        parent.percent()
+    };
+
+    let status = if status_is_error {
+        let cancelled = items
+            .iter()
+            .filter(|t| matches!(t.status, TransferStatus::Error | TransferStatus::Conflict))
+            .all(|t| matches!(t.error.as_deref(), Some("用户取消") | Some("Cancelled")));
+        let label = if cancelled {
+            "已取消".to_string()
+        } else if failed > 0 {
+            format!("失败 {failed}")
         } else {
-            theme::ACCENT
+            "失败".to_string()
+        };
+        (label, true)
+    } else {
+        (format!("{percent:.0}%"), false)
+    };
+
+    let meta = (total > 0).then(|| {
+        let mut text = format!("完成 {done}/{total}");
+        // While the batch is still running the status column shows the current
+        // file, so surface earlier failures in the counter instead. Once the
+        // batch stops, the status column itself becomes `失败 N` / `已取消`.
+        if failed > 0 && !status_is_error {
+            text.push_str(&format!(" · 失败 {failed}"));
+        }
+        text
+    });
+    let meta_error = failed > 0 && !status_is_error;
+
+    let error_tip = parent.error.as_deref().or_else(|| {
+        items
+            .iter()
+            .find(|t| matches!(t.status, TransferStatus::Error | TransferStatus::Conflict))
+            .and_then(|t| t.error.as_deref())
+    });
+
+    draw_queue_row(
+        ui,
+        app,
+        session_id,
+        rect,
+        QueueRowView {
+            direction,
+            name,
+            percent,
+            status,
+            meta,
+            meta_error,
+            error,
+            error_tip: if error { error_tip } else { None },
+            cancel: active.then(|| (gid.to_string(), "全部取消")),
         },
     );
+}
+
+fn single_row(
+    ui: &mut Ui,
+    app: &mut AppState,
+    session_id: &str,
+    rect: Rect,
+    item: &TransferProgress,
+) {
+    let is_error = matches!(
+        item.status,
+        TransferStatus::Error | TransferStatus::Conflict
+    );
+    let percent = item.percent();
+    let status = if is_error {
+        (error_label(item.error.as_deref()).to_string(), true)
+    } else {
+        (format!("{percent:.0}%"), false)
+    };
+    let cancel = matches!(
+        item.status,
+        TransferStatus::Pending | TransferStatus::Transferring
+    )
+    .then(|| (item.id.clone(), "取消"));
+
+    draw_queue_row(
+        ui,
+        app,
+        session_id,
+        rect,
+        QueueRowView {
+            direction: item.direction,
+            name: &item.file_name,
+            percent,
+            status,
+            meta: None,
+            meta_error: false,
+            error: is_error,
+            error_tip: if is_error { item.error.as_deref() } else { None },
+            cancel,
+        },
+    );
+}
+
+fn error_label(error: Option<&str>) -> &'static str {
+    match error {
+        Some("用户取消") | Some("Cancelled") => "已取消",
+        _ => "失败",
+    }
+}
+
+/// Paint one queue row:
+///
+/// ```text
+/// [→] file-name-that-gets-ellipsized…      完成 2/5   42%   [×]
+///     [============== progress ==============]
+/// ```
+///
+/// Only the right-hand status columns and the cancel button are fixed; the name
+/// and the track share whatever width is left, so the row stays readable when
+/// the file manager is resized.
+fn draw_queue_row(
+    ui: &mut Ui,
+    app: &mut AppState,
+    session_id: &str,
+    rect: Rect,
+    view: QueueRowView<'_>,
+) {
+    let painter = ui.painter().clone();
+    let font = theme::f_xs();
+    let meta_font = theme::font_sans(theme::TEXT_XS - 1.0);
+
+    let card = CornerRadius::same(theme::RADIUS_SM);
+    let (card_bg, card_border) = if view.error {
+        (theme::QUEUE_ROW_BG_ERROR, theme::QUEUE_ROW_BORDER_ERROR)
+    } else {
+        (theme::QUEUE_ROW_BG, theme::QUEUE_ROW_BORDER)
+    };
+    painter.rect_filled(rect, card, card_bg);
+    painter.rect_stroke(
+        rect,
+        card,
+        Stroke::new(1.0, card_border),
+        StrokeKind::Inside,
+    );
+
+    let left = rect.left() + 10.0;
+    let cancel_w = if view.cancel.is_some() { 30.0 } else { 0.0 };
+    let right = rect.right() - 10.0 - cancel_w;
+    let text_left = left + 18.0;
+    let top_y = rect.top() + 11.0;
+    let track_y = rect.top() + 23.0;
+
+    widgets::icon(
+        &painter,
+        Pos2::new(left + 6.0, rect.center().y),
+        13.0,
+        match view.direction {
+            TransferDirection::Upload => crate::icons::ARROW_RIGHT,
+            TransferDirection::Download => crate::icons::ARROW_LEFT,
+        },
+        theme::ACCENT_LIGHT,
+    );
+
+    let status_w = text_width(&painter, &view.status.0, &font);
+    let mut name_right = right - status_w - 8.0;
+    let mut meta_text: Option<&str> = None;
+    if let Some(text) = view.meta.as_deref() {
+        let w = text_width(&painter, text, &meta_font);
+        // On narrow panels drop the counter rather than squeezing the file name
+        // down to a couple of glyphs.
+        if name_right - w - 10.0 - text_left >= 120.0 {
+            name_right -= w + 10.0;
+            meta_text = Some(text);
+        }
+    }
+
+    let name = theme::truncate(
+        &painter,
+        view.name,
+        &font,
+        (name_right - text_left).max(24.0),
+    );
+    painter.text(
+        Pos2::new(text_left, top_y),
+        Align2::LEFT_CENTER,
+        name,
+        font.clone(),
+        theme::TEXT_PRIMARY,
+    );
+
+    painter.text(
+        Pos2::new(right, top_y),
+        Align2::RIGHT_CENTER,
+        &view.status.0,
+        font.clone(),
+        if view.status.1 {
+            theme::ERROR
+        } else {
+            theme::ACCENT_LIGHT
+        },
+    );
+    if let Some(text) = meta_text {
+        painter.text(
+            Pos2::new(right - status_w - 10.0, top_y),
+            Align2::RIGHT_CENTER,
+            text,
+            meta_font,
+            if view.meta_error {
+                theme::ERROR
+            } else {
+                theme::TEXT_MUTED
+            },
+        );
+    }
+
+    let track = Rect::from_min_max(
+        Pos2::new(text_left, track_y),
+        Pos2::new(right, track_y + 6.0),
+    );
+    if track.width() > 12.0 {
+        progress_track(&painter, track, view.percent / 100.0, view.error);
+    }
+
+    if let Some((id, tooltip)) = view.cancel.as_ref() {
+        let cancel_rect = Rect::from_center_size(
+            Pos2::new(rect.right() - 22.0, rect.center().y),
+            Vec2::splat(24.0),
+        );
+        let r = ui.interact(
+            cancel_rect,
+            ui.id().with(("queue-cancel", session_id, id)),
+            Sense::click(),
+        );
+        widgets::cross(
+            &painter,
+            cancel_rect.center(),
+            9.0,
+            if r.hovered() {
+                theme::ERROR
+            } else {
+                theme::TEXT_MUTED
+            },
+        );
+        if r.hovered() {
+            r.clone().on_hover_text(*tooltip);
+        }
+        if r.clicked() {
+            app.cancel_transfer(id);
+        }
+    }
+
+    if let Some(tip) = view.error_tip {
+        let hover = Rect::from_min_max(
+            Pos2::new(right - status_w, rect.top()),
+            Pos2::new(right, rect.top() + 22.0),
+        );
+        ui.interact(
+            hover,
+            ui.id().with(("queue-error", session_id, view.name)),
+            Sense::hover(),
+        )
+        .on_hover_text(tip);
+    }
+}
+
+fn text_width(painter: &egui::Painter, text: &str, font: &egui::FontId) -> f32 {
+    painter
+        .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+        .size()
+        .x
+}
+
+/// Shared progress track: an inset dark groove with a glossy blue (or red)
+/// fill. Kept deliberately thin so the row still reads as text first.
+fn progress_track(painter: &egui::Painter, track: Rect, fraction: f32, error: bool) {
+    let radius = CornerRadius::same(theme::RADIUS_XS);
+    painter.rect_filled(track, radius, theme::QUEUE_TRACK_BG);
+    let fraction = fraction.clamp(0.0, 1.0);
+    // A zero-width rounded rect still leaves a visible dot in egui; skip it so
+    // a queued/error row starts with a clean empty track.
+    if fraction <= 0.0 {
+        return;
+    }
+    let fill = Rect::from_min_size(
+        track.min,
+        Vec2::new((track.width() * fraction).max(2.0), track.height()),
+    );
+    let (base, shine) = if error {
+        (
+            Color32::from_rgb(0xe0, 0x57, 0x5c),
+            Color32::from_rgba_unmultiplied(255, 200, 202, 70),
+        )
+    } else {
+        (
+            theme::ACCENT,
+            Color32::from_rgba_unmultiplied(190, 220, 255, 70),
+        )
+    };
+    painter.rect_filled(fill, radius, base);
+
+    // A single highlight line along the top turns the flat fill into a subtle
+    // glassy bar without needing a real gradient.
+    if fill.width() > 4.0 {
+        let shine_rect = Rect::from_min_max(
+            Pos2::new(fill.left() + 1.0, fill.top() + 1.0),
+            Pos2::new(
+                fill.right() - 1.0,
+                fill.top() + (track.height() * 0.45).max(1.0),
+            ),
+        );
+        painter.rect_filled(shine_rect, CornerRadius::same(2), shine);
+    }
 }
 
 // ── Divider ──────────────────────────────────────────────────────────────────
@@ -1698,5 +1819,58 @@ fn inline_dialog(ui: &mut Ui, app: &mut AppState, session_id: &str) {
         if let Some(a) = fm.inline_action.as_mut() {
             a.value = value;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: &str, status: TransferStatus, group: Option<&str>) -> TransferProgress {
+        TransferProgress {
+            id: id.into(),
+            file_name: id.into(),
+            direction: TransferDirection::Upload,
+            total: 100,
+            transferred: 0,
+            status,
+            error: None,
+            target_path: None,
+            conflict_path: None,
+            conflict_is_dir: false,
+            session_id: Some("s1".into()),
+            group_id: group.map(str::to_string),
+            created_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn batch_row_stays_between_files() {
+        let gid = "batch-1";
+        // The parent is still running while the last child has already finished:
+        // this is the frame where the old code hid the whole batch.
+        let rows = build_queue_rows(&[
+            row(gid, TransferStatus::Transferring, Some(gid)),
+            row("a", TransferStatus::Done, Some(gid)),
+        ]);
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(rows[0], QueueRow::Group { .. }));
+
+        // Parent and children all done: the row goes away.
+        let rows = build_queue_rows(&[
+            row(gid, TransferStatus::Done, Some(gid)),
+            row("a", TransferStatus::Done, Some(gid)),
+        ]);
+        assert!(rows.is_empty());
+
+        // A failed child keeps the finished batch visible.
+        let mut failed = row("b", TransferStatus::Error, Some(gid));
+        failed.error = Some("失败".into());
+        let rows = build_queue_rows(&[
+            row(gid, TransferStatus::Done, Some(gid)),
+            row("a", TransferStatus::Done, Some(gid)),
+            failed,
+        ]);
+        assert_eq!(rows.len(), 1);
     }
 }

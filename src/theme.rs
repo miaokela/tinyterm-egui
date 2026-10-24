@@ -102,7 +102,24 @@ pub const TERM_SELECTION: Color32 = Color32::from_rgba_premultiplied(34, 51, 82,
 /// Faint wash behind the row that holds the cursor. It marks the shell prompt /
 /// current input line without touching the remote `PS1`, so the place to type
 /// stays findable in a long scroll of output.
-pub const TERM_INPUT_LINE: Color32 = Color32::from_rgba_premultiplied(16, 30, 52, 38);
+pub const TERM_INPUT_LINE: Color32 = Color32::from_rgba_premultiplied(16, 30, 38, 38);
+
+// ── Transfer queue ──────────────────────────────────────────────────────────
+//
+// The queue sits on the file-manager panel, so its cards are a few steps
+// lighter than the background and rely on hairlines + the blue progress fill
+// instead of loud blocks of colour.
+
+/// Normal transfer card (`rgba(14, 33, 62, 0.70)`).
+pub const QUEUE_ROW_BG: Color32 = Color32::from_rgba_premultiplied(10, 23, 43, 178);
+/// Hairline around a normal transfer card.
+pub const QUEUE_ROW_BORDER: Color32 = Color32::from_rgba_premultiplied(13, 21, 36, 36);
+/// Failed / cancelled transfer card (`rgba(96, 26, 34, 0.55)`).
+pub const QUEUE_ROW_BG_ERROR: Color32 = Color32::from_rgba_premultiplied(53, 14, 19, 140);
+/// Hairline around a failed / cancelled card.
+pub const QUEUE_ROW_BORDER_ERROR: Color32 = Color32::from_rgba_premultiplied(36, 16, 18, 40);
+/// Inset progress track (`rgba(2, 7, 16, 0.90)`).
+pub const QUEUE_TRACK_BG: Color32 = Color32::from_rgba_premultiplied(2, 6, 14, 230);
 
 // ── Radii (CSS px) ───────────────────────────────────────────────────────────
 

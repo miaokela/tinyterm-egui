@@ -551,6 +551,23 @@ impl AppState {
         }
     }
 
+    /// Re-list the local panel after a download wrote files into `path`.
+    ///
+    /// Only reloads when the panel is still showing that directory: if the user
+    /// browsed somewhere else while the transfer ran, yanking them back would be
+    /// more disruptive than a stale listing (the new path reloads on navigation
+    /// anyway).
+    pub fn refresh_local_dir_after_transfer(&mut self, session_id: &str, path: &str) {
+        let showing_target = self
+            .fm
+            .get(session_id)
+            .map(|fm| fm.local.path == path)
+            .unwrap_or(false);
+        if showing_target {
+            self.load_local_dir(session_id, path.to_string());
+        }
+    }
+
     pub fn apply_local_dir(
         &mut self,
         request: u64,

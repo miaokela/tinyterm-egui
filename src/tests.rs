@@ -348,6 +348,42 @@ fn overlays_own_the_keyboard() {
 }
 
 #[test]
+fn download_completion_refreshes_the_local_panel() {
+    let (db, dir) = temp_db("local-refresh");
+    let db = std::sync::Arc::new(db);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mgr = std::sync::Arc::new(crate::session::SessionManager::new(
+        rt.handle().clone(),
+        Default::default(),
+        db.clone(),
+    ));
+    let mut app = crate::state::AppState::new(db, mgr, Default::default(), 1.0);
+
+    let target = dir.join("downloads").to_string_lossy().to_string();
+    app.fm.insert(
+        "s1".into(),
+        crate::state::FileManagerState {
+            local: crate::state::PanelState {
+                path: target.clone(),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    // The download target is the directory the panel is showing: reload it.
+    app.refresh_local_dir_after_transfer("s1", &target);
+    assert_eq!(app.local_load_queue.len(), 1);
+    assert_eq!(app.local_load_queue[0].path, target);
+
+    // A different target must not navigate the panel elsewhere.
+    app.refresh_local_dir_after_transfer("s1", "/somewhere/else");
+    assert_eq!(app.local_load_queue.len(), 1);
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
 fn path_helpers() {
     assert_eq!(remote_fs::join_path("/a", "b"), "/a/b");
     assert_eq!(remote_fs::join_path("/a/", "b"), "/a/b");

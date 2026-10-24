@@ -48,6 +48,12 @@ pub enum AppEvent {
     },
     /// Transfer queue update.
     Transfer(Box<TransferProgress>),
+    /// A transfer wrote files into a local directory; the file manager should
+    /// re-list it when the panel is still showing that path.
+    LocalDir {
+        session_id: String,
+        path: String,
+    },
     /// Best-effort async delete report.
     RemoteDelete {
         path: String,
